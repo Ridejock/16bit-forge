@@ -1,0 +1,92 @@
+# SPDX-License-Identifier: MIT
+# Builds and tests on Windows (MSVC) and Linux. Uses no ROMs: the test suites generate their own
+# test ROM in code. The Windows job uploads the release zip as a build artifact (nothing is
+# published).
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Windows (MSVC)
+    runs-on: windows-latest
+    timeout-minutes: 120
+    env:
+      # Short path: the shadercross/DXC build has deep paths.
+      EMERALD_CACHE_DIR: C:\emc
+      SDL_VIDEODRIVER: dummy
+      SDL_AUDIODRIVER: dummy
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache shadercross
+        uses: actions/cache@v4
+        with:
+          path: C:\emc
+          key: shadercross-windows-${{ hashFiles('tools/shadercross/**') }}
+
+      - name: Configure
+        run: cmake -S . -B build -A x64
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Package
+        working-directory: build
+        run: cpack -C Release -G ZIP
+
+      - name: Upload zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: snes_emulator-windows-x64
+          path: build/snes_emulator-*.zip
+          if-no-files-found: error
+
+  linux:
+    name: Linux (GCC + Ninja)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      EMERALD_CACHE_DIR: /home/runner/.emc
+      SDL_VIDEODRIVER: dummy
+      SDL_AUDIODRIVER: dummy
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build clang python3 \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev \
+            libxtst-dev libxfixes-dev libxkbcommon-dev libwayland-dev wayland-protocols \
+            libegl-dev libgl-dev libdrm-dev libgbm-dev libdecor-0-dev \
+            libasound2-dev libpulse-dev libpipewire-0.3-dev libdbus-1-dev libudev-dev
+
+      - name: Cache shadercross
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/.emc
+          key: shadercross-linux-${{ hashFiles('tools/shadercross/**') }}
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure

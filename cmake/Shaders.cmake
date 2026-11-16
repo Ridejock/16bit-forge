@@ -1,0 +1,323 @@
+# SPDX-License-Identifier: MIT
+# Build-time HLSL shader compilation with SDL_shadercross.
+#
+# Copied from Ervin Ashley's Emerald engine (MIT), cmake/Shaders.cmake at commit 2952e05, with
+# two changes: only the shaders passed in are compiled (Emerald also adds its engine shaders),
+# and the migration of old Emerald build dirs is gone. The EMERALD_* option names and the
+# per-user tool folder are kept on purpose: tools/shadercross is byte-identical to Emerald's,
+# so its recipe hash matches and a shadercross already built for Emerald on this machine is
+# reused instead of building DirectXShaderCompiler again.
+#
+#   emerald_add_shaders(<target> <file.vert.hlsl> <file.frag.hlsl> ...)
+#
+# Each HLSL file is compiled to every format in EMERALD_SHADER_FORMATS (SPIR-V for Vulkan, DXIL
+# for Direct3D 12, MSL for Metal) plus a reflection .json, into a shaders/ folder next to the
+# target's executable (its RUNTIME_OUTPUT_DIRECTORY, or its build folder if that is not set).
+# The stage comes from the file name: *.vert.hlsl, *.frag.hlsl or *.comp.hlsl; the entry point
+# is always `main`. Editing an .hlsl (or any .hlsli in the same folder) recompiles it.
+# The target also gets EMERALD_SHADER_FORMATS defined as the matching SDL_GPUShaderFormat mask.
+#
+# Where the shadercross executable comes from:
+#   1. EMERALD_SHADERCROSS_EXECUTABLE, if set (a prebuilt tool; e.g. from an SDL_shadercross
+#      release or your own build), else
+#   2. built from source (EMERALD_BUILD_SHADERCROSS=ON, default) as a separate host-tool project
+#      (tools/shadercross) in EMERALD_SHADERCROSS_BUILD_DIR. By default that is a per-user cache
+#      folder named after a hash of the tool's recipe (tools/shadercross), e.g.
+#      %USERPROFILE%/.emerald/shadercross/<hash> or ~/.cache/emerald/shadercross/<hash>, shared by
+#      every preset and every project on the machine. Once a build there has finished (its bin/
+#      holds the tool and an emerald-shadercross.ok marker), later configures use it as a prebuilt
+#      tool and never touch its build tree again, so the (slow) DirectXShaderCompiler build happens
+#      once per machine and recipe, else
+#   3. `shadercross` found on PATH.
+
+option(EMERALD_BUILD_SHADERCROSS
+    "Build SDL_shadercross from source when EMERALD_SHADERCROSS_EXECUTABLE is not set" ON)
+set(EMERALD_SHADERCROSS_EXECUTABLE "" CACHE FILEPATH
+    "Prebuilt shadercross executable to use instead of building it")
+# The default tool folder: per user, named after the tool's recipe, so a change to the pinned
+# versions or build steps gets a fresh folder and an unchanged one is reused everywhere.
+function(_emerald_default_shadercross_dir out)
+    get_filename_component(recipe_dir "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../tools/shadercross" ABSOLUTE)
+    set(recipe "")
+    foreach(name CMakeLists.txt Probe.cmake)
+        file(READ "${recipe_dir}/${name}" text)
+        string(APPEND recipe "${name}\n${text}\n")
+    endforeach()
+    string(SHA256 hash "${recipe}")
+    string(SUBSTRING "${hash}" 0 12 hash)
+    if(DEFINED ENV{EMERALD_CACHE_DIR})
+        set(root "$ENV{EMERALD_CACHE_DIR}")
+    elseif(CMAKE_HOST_WIN32 AND DEFINED ENV{USERPROFILE})
+        # Not %LOCALAPPDATA%: DXC's sources hold paths ~200 characters deep, and Windows (git,
+        # MSVC) fails past 260, so the folder itself must stay short.
+        set(root "$ENV{USERPROFILE}/.emerald")
+    elseif(CMAKE_HOST_APPLE)
+        set(root "$ENV{HOME}/Library/Caches/Emerald")
+    elseif(DEFINED ENV{XDG_CACHE_HOME})
+        set(root "$ENV{XDG_CACHE_HOME}/emerald")
+    else()
+        set(root "$ENV{HOME}/.cache/emerald")
+    endif()
+    file(TO_CMAKE_PATH "${root}/shadercross/${hash}" dir)
+    set(${out} "${dir}" PARENT_SCOPE)
+endfunction()
+set(EMERALD_SHADERCROSS_BUILD_DIR "" CACHE PATH
+    "Build directory for the shadercross host tool (empty: the per-user cache folder)")
+set(EMERALD_SHADER_FORMATS "SPIRV;DXIL;MSL" CACHE STRING
+    "Shader formats to generate (any of SPIRV, DXIL, MSL)")
+
+# Resolves the shadercross executable once (lazily, so projects that never compile shaders
+# never build the tool). Sets the global properties EMERALD_SHADERCROSS / _DEPENDS / _FORMATS.
+function(_emerald_setup_shadercross)
+    get_property(done GLOBAL PROPERTY EMERALD_SHADERCROSS SET)
+    if(done)
+        return()
+    endif()
+
+    set(formats ${EMERALD_SHADER_FORMATS})
+    set(depends "")
+    set(prebuilt TRUE)
+
+    # Relative to this file, not PROJECT_SOURCE_DIR: that is the calling project's when Emerald is
+    # a subproject (FetchContent / add_subdirectory).
+    get_filename_component(EMERALD_ROOT "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/.." ABSOLUTE)
+
+    # Not cached, so a new recipe (e.g. after bumping Emerald) picks its new folder.
+    set(tool_dir "${EMERALD_SHADERCROSS_BUILD_DIR}")
+    if(NOT tool_dir)
+        _emerald_default_shadercross_dir(tool_dir)
+    endif()
+
+    if(EMERALD_SHADERCROSS_EXECUTABLE)
+        set(exe "${EMERALD_SHADERCROSS_EXECUTABLE}")
+    elseif(EMERALD_BUILD_SHADERCROSS AND EXISTS
+           "${tool_dir}/bin/emerald-shadercross.ok")
+        # Built (and smoke-tested) before: use it as is, without a build step.
+        set(exe "${tool_dir}/bin/shadercross${CMAKE_EXECUTABLE_SUFFIX}")
+        set(prebuilt FALSE) # ours, with DXC beside it: no probe needed
+        message(STATUS "Emerald: using the shadercross built in ${tool_dir}")
+    elseif(EMERALD_BUILD_SHADERCROSS)
+        include(ExternalProject)
+        set(prebuilt FALSE)
+        set(exe "${tool_dir}/bin/shadercross${CMAKE_EXECUTABLE_SUFFIX}")
+        set(tool_args -DCMAKE_BUILD_TYPE=Release)
+        if(MSVC)
+            # SPIRV-Cross builds as C++11 (MSVC: C++14) but uses [[fallthrough]] in spirv_msl.cpp:
+            # C5051, harmless. Silenced for the tool only; passed here rather than in
+            # tools/shadercross so the tool's recipe hash (and an existing build) stays the same.
+            list(APPEND tool_args -DCMAKE_CXX_FLAGS_INIT=/wd5051)
+        endif()
+        if(CMAKE_GENERATOR MATCHES "Ninja|Makefiles")
+            set(tool_c "${CMAKE_C_COMPILER}")
+            set(tool_cxx "${CMAKE_CXX_COMPILER}")
+            # GCC 14 miscompiles DXC: the tool builds and compiles simple shaders, but every
+            # texture sample then fails DXIL validation ("sample_* instructions require resource
+            # to be declared to return UNORM, SNORM or FLOAT"). Build the tool with Clang instead
+            # when it is installed (the engine and game still use the chosen compiler).
+            if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND
+               CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 14)
+                find_program(EMERALD_TOOL_CLANG NAMES clang)
+                find_program(EMERALD_TOOL_CLANGXX NAMES clang++)
+                if(EMERALD_TOOL_CLANG AND EMERALD_TOOL_CLANGXX)
+                    set(tool_c "${EMERALD_TOOL_CLANG}")
+                    set(tool_cxx "${EMERALD_TOOL_CLANGXX}")
+                    message(STATUS "Emerald: building shadercross with Clang (GCC 14+ miscompiles DXC)")
+                else()
+                    message(WARNING "Emerald: GCC ${CMAKE_CXX_COMPILER_VERSION} miscompiles DXC, so "
+                                    "DXIL shaders that sample textures will fail to build. Install "
+                                    "clang (it is then used for the shadercross tool), or set "
+                                    "EMERALD_SHADERCROSS_EXECUTABLE to a prebuilt shadercross.")
+                endif()
+            endif()
+            list(APPEND tool_args -DCMAKE_C_COMPILER=${tool_c} -DCMAKE_CXX_COMPILER=${tool_cxx})
+        endif()
+        # The tool's source must be the same path for every build sharing the tool dir, or its
+        # CMake cache refuses it (a game that FetchContent's Emerald has one Emerald copy per build
+        # dir). So copy the few recipe files to a folder next to the tool dir; only changed files
+        # are written, so their timestamps stay put.
+        string(LENGTH "${tool_dir}" tool_dir_length)
+        if(CMAKE_HOST_WIN32 AND tool_dir_length GREATER 56)
+            message(WARNING "Emerald: the shadercross folder '${tool_dir}' is long; DXC's deepest "
+                            "source paths may pass Windows' 260-character limit and fail to clone "
+                            "or build. Set the EMERALD_CACHE_DIR environment variable to a short "
+                            "folder such as C:/emerald-cache.")
+        endif()
+        set(tool_source "${tool_dir}-src")
+        file(MAKE_DIRECTORY "${tool_source}")
+        file(GLOB tool_files "${EMERALD_ROOT}/tools/shadercross/*")
+        foreach(tool_file IN LISTS tool_files)
+            get_filename_component(tool_file_name "${tool_file}" NAME)
+            file(COPY_FILE "${tool_file}" "${tool_source}/${tool_file_name}" ONLY_IF_DIFFERENT)
+        endforeach()
+
+        # ExternalProject's stamps live in each engine build dir, the tool dir is shared: without
+        # a finished tool there, drop the stamps so configure + build of the tool really run.
+        set(stamp_dir "${CMAKE_BINARY_DIR}/_emerald_shadercross-stamp")
+        file(REMOVE_RECURSE "${stamp_dir}")
+        ExternalProject_Add(emerald_shadercross
+            STAMP_DIR         "${stamp_dir}"
+            SOURCE_DIR        "${tool_source}"
+            BINARY_DIR        "${tool_dir}"
+            CMAKE_ARGS        ${tool_args}
+            # shadercross_bundle = shadercross + dxcompiler/dxil copied next to it + smoke test.
+            BUILD_COMMAND     ${CMAKE_COMMAND} --build <BINARY_DIR> --config Release
+                              --target shadercross_bundle
+            INSTALL_COMMAND   ""
+            BUILD_BYPRODUCTS  "${exe}"
+            USES_TERMINAL_CONFIGURE TRUE
+            USES_TERMINAL_BUILD     TRUE
+        )
+        set(depends emerald_shadercross "${exe}")
+        message(STATUS "Emerald: shadercross will be built from source in ${tool_dir}"
+                       " (compiles DirectXShaderCompiler once per machine and takes a while)")
+    else()
+        find_program(EMERALD_SHADERCROSS_FOUND NAMES shadercross)
+        if(NOT EMERALD_SHADERCROSS_FOUND)
+            message(FATAL_ERROR
+                "shadercross not found. Set EMERALD_SHADERCROSS_EXECUTABLE, put shadercross on "
+                "PATH, or enable EMERALD_BUILD_SHADERCROSS.")
+        endif()
+        set(exe "${EMERALD_SHADERCROSS_FOUND}")
+    endif()
+
+    # A prebuilt shadercross may lack DXC (DXIL output). Probe it once and drop DXIL with a
+    # warning instead of failing the build; the engine then only loads the other formats.
+    if(prebuilt AND "DXIL" IN_LIST formats)
+        set(probe_dir "${CMAKE_BINARY_DIR}/shadercross-probe")
+        file(WRITE "${probe_dir}/probe.frag.hlsl" "float4 main() : SV_Target0 { return 1; }\n")
+        execute_process(
+            COMMAND "${exe}" "${probe_dir}/probe.frag.hlsl" -s HLSL -d DXIL -t fragment
+                    -o "${probe_dir}/probe.dxil"
+            RESULT_VARIABLE probe_result OUTPUT_VARIABLE probe_output ERROR_VARIABLE probe_output)
+        if(NOT probe_result EQUAL 0)
+            string(STRIP "${probe_output}" probe_output)
+            set(hint "")
+            if(probe_output MATCHES "SPIR-V CodeGen not available")
+                string(CONCAT hint " It loaded a dxcompiler without SPIR-V codegen (on Windows usually the "
+                         "Windows SDK's or System32's dxcompiler.dll because the one built with "
+                         "shadercross is not next to the .exe); shadercross needs it because "
+                         "HLSL -> DXIL round-trips through SPIR-V. Put the matching dxcompiler.dll "
+                         "and dxil.dll next to shadercross.")
+            endif()
+            message(WARNING "Emerald: '${exe}' cannot produce DXIL: ${probe_output}${hint} DXIL "
+                            "shaders are skipped, so the D3D12 backend will not find its shaders.")
+            list(REMOVE_ITEM formats DXIL)
+        endif()
+    endif()
+
+    message(STATUS "Emerald: shadercross = ${exe}; shader formats: ${formats}")
+    set_property(GLOBAL PROPERTY EMERALD_SHADERCROSS "${exe}")
+    set_property(GLOBAL PROPERTY EMERALD_SHADERCROSS_DEPENDS "${depends}")
+    set_property(GLOBAL PROPERTY EMERALD_SHADERCROSS_FORMATS "${formats}")
+endfunction()
+
+function(emerald_add_shaders target)
+    _emerald_setup_shadercross()
+    get_property(shadercross GLOBAL PROPERTY EMERALD_SHADERCROSS)
+    get_property(tool_depends GLOBAL PROPERTY EMERALD_SHADERCROSS_DEPENDS)
+    get_property(formats GLOBAL PROPERTY EMERALD_SHADERCROSS_FORMATS)
+
+    # Shaders go next to the executable, e.g. build/debug/bin/shaders/.
+    get_target_property(exe_dir ${target} RUNTIME_OUTPUT_DIRECTORY)
+    if(NOT exe_dir)
+        get_target_property(exe_dir ${target} BINARY_DIR)
+    endif()
+    get_property(multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+    if(multi_config AND NOT exe_dir MATCHES "\\$<")
+        set(out_dir "${exe_dir}/$<CONFIG>/shaders") # e.g. Visual Studio: bin/Debug/shaders
+    else()
+        set(out_dir "${exe_dir}/shaders")
+    endif()
+
+    set(sources ${ARGN})
+
+    set(ext_SPIRV spv)
+    set(ext_DXIL dxil)
+    set(ext_MSL msl)
+    set(ext_JSON json)
+
+    set(outputs "")
+    set(shared_targets "")
+    foreach(src IN LISTS sources)
+        get_filename_component(src "${src}" ABSOLUTE)
+        get_filename_component(src_dir "${src}" DIRECTORY)
+        get_filename_component(file_name "${src}" NAME)
+        string(REGEX REPLACE "\\.hlsl$" "" base "${file_name}") # Triangle.vert
+
+        if(base MATCHES "\\.vert$")
+            set(stage vertex)
+        elseif(base MATCHES "\\.frag$")
+            set(stage fragment)
+        elseif(base MATCHES "\\.comp$")
+            set(stage compute)
+        else()
+            message(FATAL_ERROR "Cannot infer shader stage of '${file_name}' "
+                                "(expected *.vert.hlsl, *.frag.hlsl or *.comp.hlsl)")
+        endif()
+
+        file(GLOB includes CONFIGURE_DEPENDS "${src_dir}/*.hlsli")
+        foreach(format IN LISTS formats ITEMS JSON)
+            set(out "${out_dir}/${base}.${ext_${format}}")
+            # Several executables sharing an output folder (e.g. all in bin/) share the engine
+            # shaders: only the first gets the build rule, the others depend on its target.
+            string(MD5 out_key "${out}")
+            get_property(owner GLOBAL PROPERTY "EMERALD_SHADER_RULE_${out_key}")
+            if(owner)
+                list(APPEND shared_targets ${owner})
+                continue()
+            endif()
+            set_property(GLOBAL PROPERTY "EMERALD_SHADER_RULE_${out_key}" ${target}_shaders)
+            add_custom_command(
+                OUTPUT  "${out}"
+                COMMAND ${CMAKE_COMMAND} -E make_directory "${out_dir}"
+                COMMAND "${shadercross}" "${src}" -s HLSL -d ${format} -t ${stage} -e main
+                        -I "${src_dir}" -o "${out}"
+                DEPENDS "${src}" ${includes} ${tool_depends}
+                COMMENT "shadercross ${file_name} -> ${base}.${ext_${format}}"
+                VERBATIM)
+            list(APPEND outputs "${out}")
+        endforeach()
+    endforeach()
+
+    # Listed in the IDE only: shadercross is their one compiler. Without this the Visual Studio
+    # generator hands .hlsl files to FXCompile (fxc, SM 5.0), which rejects the SDL GPU register
+    # spaces (X3721). Set in this directory, where the custom target below is created.
+    set(abs_sources "")
+    foreach(src IN LISTS sources)
+        get_filename_component(src "${src}" ABSOLUTE)
+        list(APPEND abs_sources "${src}")
+    endforeach()
+    set_source_files_properties(${abs_sources} DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+                                PROPERTIES VS_TOOL_OVERRIDE "None")
+    add_custom_target(${target}_shaders ALL DEPENDS ${outputs} SOURCES ${abs_sources})
+    add_dependencies(${target} ${target}_shaders)
+    list(REMOVE_DUPLICATES shared_targets)
+    foreach(shared IN LISTS shared_targets)
+        add_dependencies(${target}_shaders ${shared})
+    endforeach()
+
+    # Tell the code which formats exist, e.g. for ApplicationSpec::ShaderFormats.
+    # The mask uses the same bits as ShaderFormat. Assign it with ShaderFormatFromMask.
+    # SPIR-V is bit 1, DXBC bit 2, DXIL bit 3, MSL bit 4, Metallib bit 5.
+    set(format_bits "")
+    foreach(format IN LISTS formats)
+        if(format STREQUAL "PRIVATE")
+            set(bit 1)
+        elseif(format STREQUAL "SPIRV")
+            set(bit 2)
+        elseif(format STREQUAL "DXBC")
+            set(bit 4)
+        elseif(format STREQUAL "DXIL")
+            set(bit 8)
+        elseif(format STREQUAL "MSL")
+            set(bit 16)
+        elseif(format STREQUAL "METALLIB")
+            set(bit 32)
+        else()
+            message(FATAL_ERROR "Emerald: unknown shader format '${format}'")
+        endif()
+        list(APPEND format_bits "${bit}u")
+    endforeach()
+    list(JOIN format_bits "|" format_mask)
+    target_compile_definitions(${target} PRIVATE "EMERALD_SHADER_FORMATS=(${format_mask})")
+endfunction()

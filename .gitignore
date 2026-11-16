@@ -1,0 +1,54 @@
+# Build output
+/build/
+/build-*/
+/build_*/
+/out/
+/cmake-build-*/
+/_deps/
+CMakeCache.txt
+CMakeFiles/
+CMakeUserPresets.json
+compile_commands.json
+*.obj
+*.o
+*.pdb
+*.ilk
+*.exe
+*.dll
+*.lib
+*.a
+*.so
+*.zip
+
+# IDEs
+/.vs/
+/.vscode/
+/.idea/
+*.user
+*.suo
+
+# Games, firmware and everything the emulator writes next to itself.
+# Never commit ROMs, BIOS/firmware dumps or saves.
+/roms/
+/saves/
+/states/
+/cheats/
+/firmware/
+/logs/
+*.sfc
+*.smc
+*.swc
+*.fig
+*.spc
+*.rom
+*.srm
+*.sst
+*.rtc
+*.msu
+*.pcm
+*.cht
+*.log
+*.wav
+# User config (the release ships config/snes_emulator.ini as the default)
+/snes_emulator.ini
+imgui.ini
