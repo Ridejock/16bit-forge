@@ -347,11 +347,20 @@ auto EmuThread::publish_status() -> void {
 }
 
 // Logs underruns (at most once a second) and sustained slow emulation (every 10 s), with the
-// numbers that tell sync problems from speed problems.
+// numbers that tell sync problems from speed problems. Fast-forward and rewind leave the audio
+// off its normal pace on purpose, so underruns are still counted but the warning is held until
+// a short settle after speed returns to normal.
 auto EmuThread::watch_audio(uint64_t now) -> void {
     const AudioOutput::Stats s = core_.audio.stats();
     if (s.underruns < logged_underruns_) logged_underruns_ = s.underruns;  // a new session reset the counters
-    if (s.underruns > logged_underruns_ && now - last_underrun_log_ns_ >= kLogIntervalNs) {
+    const bool speed = rewinding_ || fast_forward_;
+    if (speed) speed_settle_until_ns_ = now + kUnderrunLogSettleNs;
+    if (speed || now < speed_settle_until_ns_) {
+        if (s.underruns > logged_underruns_) {
+            logged_underruns_ = s.underruns;  // so a later warning's (+k) starts after the window
+            frame_gap_ms_max_ = 0.0;
+        }
+    } else if (s.underruns > logged_underruns_ && now - last_underrun_log_ns_ >= kLogIntervalNs) {
         utils::Logger::warning(utils::LogChannel::Audio, "Audio underrun: %llu total (+%llu), %.0f ms of silence so far | queue avg %.1f ms of %.0f, "
                                "rate %+.3f%%, pull %.1f ms | device played %.0f ms past the last queued frame | emulation %.2f ms/frame "
                                "(worst %.2f), %.1f fps, longest gap between frames %.0f ms (emulation thread)",

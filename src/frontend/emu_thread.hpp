@@ -79,6 +79,7 @@ class EmuThread {
 public:
     static constexpr uint64_t kFrameNs = static_cast<uint64_t>(1'000'000'000.0 / Emulator::kNtscFrameRate);
     static constexpr uint64_t kMaxLagFrames = 4;  // past this, resync instead of fast-forwarding
+    static constexpr uint64_t kUnderrunLogSettleNs = 250'000'000ULL;  // after fast-forward or rewind ends
 
     // Everything the emulation thread owns.
     struct Core {
@@ -199,6 +200,7 @@ private:
     uint64_t logged_underruns_ = 0;
     uint64_t last_underrun_log_ns_ = 0;
     uint64_t last_slow_log_ns_ = 0;
+    uint64_t speed_settle_until_ns_ = 0;  // underrun warnings stay quiet until this time
 };
 
 template <typename F>

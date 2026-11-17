@@ -52,11 +52,33 @@ const double kAllowedSilenceMs = std::getenv("CI") ? 100.0 : 0.0;
 constexpr double kFastForwardMinRatio = 1.2;  // fast-forward must beat normal speed by at least this
 constexpr double kSpeedWarmupS = 2.8;
 constexpr double kSpeedPhaseS = 1.5;
-constexpr double kSpeedSettleS = 0.25;
+constexpr double kSpeedSettleS = static_cast<double>(EmuThread::kUnderrunLogSettleNs) / 1e9;
 constexpr double kSpeedRecoverS = 1.0;
 constexpr double kSpeedRewindS = 1.0;
 constexpr double kSpeedScriptS =
     kSpeedWarmupS + kSpeedPhaseS + kSpeedPhaseS + kSpeedSettleS + kSpeedRecoverS + kSpeedRewindS;
+
+auto count_underrun_warnings() -> int {
+    int n = 0;
+    const int lines = snes::utils::Logger::line_count();
+    for (int i = 0; i < lines; i++) {
+        const auto line = snes::utils::Logger::line(i);
+        if (line.level == snes::utils::LogLevel::Warning &&
+            line.text.find("Audio underrun:") != std::string::npos) {
+            n++;
+        }
+    }
+    return n;
+}
+
+// Temporarily show Warning lines in the System ring so tests can see underrun reports.
+struct UnderrunLogCapture {
+    UnderrunLogCapture() {
+        snes::utils::Logger::set_level(snes::utils::LogLevel::Warning);
+        snes::utils::Logger::clear();
+    }
+    ~UnderrunLogCapture() { snes::utils::Logger::set_level(snes::utils::LogLevel::Error); }
+};
 
 #define CHECK(cond)                                                              \
     do {                                                                         \
@@ -421,12 +443,14 @@ auto test_harness(bool audio_sync) -> void {
 auto test_harness_timer() -> void { test_harness(false); }
 
 auto test_harness_control() -> void {
+    const UnderrunLogCapture logs;
     const HarnessResult r = run_harness(6.0, 170'000'000ULL, 500'000'000ULL, false, true);
     std::printf("\n    170 ms stalls on the emulation thread: underruns %llu (%.0f ms silence)",
                 static_cast<unsigned long long>(r.underruns), r.silence_ms);
     CHECK(r.frames_ok);
 #if !SNES_UNDER_TSAN
     CHECK(r.underruns >= 3);  // one per stall after the start-up grace
+    CHECK(count_underrun_warnings() >= 1);  // normal-speed underruns still warn
 #endif
 }
 auto test_harness_audio_sync() -> void { test_harness(true); }
@@ -435,6 +459,7 @@ auto test_harness_audio_sync() -> void { test_harness(true); }
 // has to beat normal speed over the same wall time (not a fixed multiple). Audio may drop
 // while it is on; after a short settle, a following normal-speed window must stay clean.
 auto test_harness_speed() -> void {
+    const UnderrunLogCapture logs;
     const HarnessResult r = run_harness(kSpeedScriptS, 0, 1'000'000'000ULL, false, false, true);
     const double ratio = r.normal_frames > 0
         ? static_cast<double>(r.fast_frames) / static_cast<double>(r.normal_frames)
@@ -455,6 +480,7 @@ auto test_harness_speed() -> void {
     CHECK(r.recover_underruns == 0);
     CHECK(r.recover_silence_ms <= 0.0);
 #endif
+    CHECK(count_underrun_warnings() == 0);  // none while fast-forward/rewind is on, or in the settle after
 }
 
 }  // namespace
