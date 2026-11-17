@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "snes/coprocessor/obc1.hpp"
 
-namespace snes::coprocessor {
+namespace bitforge::coprocessor {
 
 // The latches mirror the SRAM bytes behind $7FF5/$7FF6, so a reset (or a loaded save) picks
 // them back up.
@@ -40,4 +40,4 @@ auto OBC1::write(Address address, Byte value) -> bool {
   return true;
 }
 
-} // namespace snes::coprocessor
+} // namespace bitforge::coprocessor

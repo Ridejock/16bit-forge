@@ -10,7 +10,7 @@
 #include <string_view>
 #include <utility>
 
-namespace snes::utils {
+namespace bitforge::utils {
 
 enum class LogLevel : uint8_t {
   Trace,    // per instruction / per register access: huge, off unless asked for
@@ -90,7 +90,7 @@ private:
 // for the log panel, appended to the sink's file if one is open (size-capped: at the cap the
 // file is renamed to <name>.1<ext> and a new one is started), and mirrored to stderr unless it
 // is Emulation Trace/Debug output. Lines below a sink's level or on a disabled channel are
-// dropped before formatting; use SNES_LOG / the *_TRACE macros on hot paths so a disabled
+// dropped before formatting; use BITFORGE_LOG / the *_TRACE macros on hot paths so a disabled
 // channel costs one table lookup. Thread-safe: lines are added and read under one mutex, and the
 // filters are atomics.
 class Logger {
@@ -161,26 +161,26 @@ private:
   static inline detail::AtomicArray<bool, kLogChannelCount> channel_on{detail::all_on()};
 };
 
-} // namespace snes::utils
+} // namespace bitforge::utils
 
 // Logs only when the channel is on and the level passes its sink: arguments aren't evaluated otherwise.
-#define SNES_LOG(channel, level, ...)                                                   \
+#define BITFORGE_LOG(channel, level, ...)                                                   \
   do {                                                                                  \
-    if (::snes::utils::Logger::enabled(channel, level)) {                               \
-      ::snes::utils::Logger::log(channel, level, __VA_ARGS__);                          \
+    if (::bitforge::utils::Logger::enabled(channel, level)) {                               \
+      ::bitforge::utils::Logger::log(channel, level, __VA_ARGS__);                          \
     }                                                                                   \
   } while (0)
 
 // Core trace points, switchable at runtime (Log > Emulation: channel on, level Trace). Define
-// SNES_NO_TRACE to compile them out entirely.
-#ifdef SNES_NO_TRACE
+// BITFORGE_NO_TRACE to compile them out entirely.
+#ifdef BITFORGE_NO_TRACE
 #define CPU_TRACE(...) ((void)0)
 #define PPU_TRACE(...) ((void)0)
 #define APU_TRACE(...) ((void)0)
 #define DMA_TRACE(...) ((void)0)
 #else
-#define CPU_TRACE(...) SNES_LOG(::snes::utils::LogChannel::Cpu, ::snes::utils::LogLevel::Trace, __VA_ARGS__)
-#define PPU_TRACE(...) SNES_LOG(::snes::utils::LogChannel::Ppu, ::snes::utils::LogLevel::Trace, __VA_ARGS__)
-#define APU_TRACE(...) SNES_LOG(::snes::utils::LogChannel::Apu, ::snes::utils::LogLevel::Trace, __VA_ARGS__)
-#define DMA_TRACE(...) SNES_LOG(::snes::utils::LogChannel::Dma, ::snes::utils::LogLevel::Trace, __VA_ARGS__)
+#define CPU_TRACE(...) BITFORGE_LOG(::bitforge::utils::LogChannel::Cpu, ::bitforge::utils::LogLevel::Trace, __VA_ARGS__)
+#define PPU_TRACE(...) BITFORGE_LOG(::bitforge::utils::LogChannel::Ppu, ::bitforge::utils::LogLevel::Trace, __VA_ARGS__)
+#define APU_TRACE(...) BITFORGE_LOG(::bitforge::utils::LogChannel::Apu, ::bitforge::utils::LogLevel::Trace, __VA_ARGS__)
+#define DMA_TRACE(...) BITFORGE_LOG(::bitforge::utils::LogChannel::Dma, ::bitforge::utils::LogLevel::Trace, __VA_ARGS__)
 #endif

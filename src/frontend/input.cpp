@@ -8,7 +8,7 @@
 #include <string>
 #include <utility>
 
-namespace snes::frontend {
+namespace bitforge::frontend {
 
 namespace {
 
@@ -401,10 +401,10 @@ auto InputManager::reassign() -> void {
 
 // ---- console ports ---------------------------------------------------------------------------
 
-auto device_allowed(int port, snes::Device device) -> bool { return device != snes::Device::SuperScope || port == 1; }
+auto device_allowed(int port, bitforge::Device device) -> bool { return device != bitforge::Device::SuperScope || port == 1; }
 
-auto parse_device(std::string_view id) -> std::optional<snes::Device> {
-    for (const auto& d : snes::kDevices) {
+auto parse_device(std::string_view id) -> std::optional<bitforge::Device> {
+    for (const auto& d : bitforge::kDevices) {
         if (d.id == id) return d.device;
     }
     return std::nullopt;
@@ -414,22 +414,22 @@ auto pad_slots(const PortDevices& devices) -> std::array<PadSlot, kPadCount> {
     std::array<PadSlot, kPadCount> slots{};
     size_t next = 0;
     for (int port = 0; port < kPortCount; port++) {
-        const snes::Device d = devices[static_cast<size_t>(port)];
-        const int count = d == snes::Device::Gamepad ? 1 : d == snes::Device::Multitap ? snes::kMultitapSlots : 0;
+        const bitforge::Device d = devices[static_cast<size_t>(port)];
+        const int count = d == bitforge::Device::Gamepad ? 1 : d == bitforge::Device::Multitap ? bitforge::kMultitapSlots : 0;
         for (int s = 0; s < count && next < slots.size(); s++) slots[next++] = {port, s};
     }
     return slots;
 }
 
-auto pad_slot_label(const PadSlot& slot, snes::Device device) -> std::string {
+auto pad_slot_label(const PadSlot& slot, bitforge::Device device) -> std::string {
     if (slot.port < 0) return "not plugged in";
     std::string label = "port " + std::to_string(slot.port + 1);
-    if (device == snes::Device::Multitap) label += ", multitap " + std::to_string(slot.slot + 1);
+    if (device == bitforge::Device::Multitap) label += ", multitap " + std::to_string(slot.slot + 1);
     return label;
 }
 
-auto scope_aim(float px, float py, float vx, float vy, float vw, float vh, int lines) -> snes::ScopeInput {
-    snes::ScopeInput aim;
+auto scope_aim(float px, float py, float vx, float vy, float vw, float vh, int lines) -> bitforge::ScopeInput {
+    bitforge::ScopeInput aim;
     if (vw <= 0.f || vh <= 0.f || lines <= 0) return aim;
     const float x = (px - vx) * 256.f / vw;
     const float y = (py - vy) * static_cast<float>(lines) / vh;
@@ -469,4 +469,4 @@ auto draw_crosshair(uint32_t* pixels, int width, int height, int lines, int x, i
     plot(x, y, kWhite);
 }
 
-} // namespace snes::frontend
+} // namespace bitforge::frontend

@@ -5,7 +5,7 @@
 #include <bit>
 #include <utility>
 
-namespace snes::coprocessor {
+namespace bitforge::coprocessor {
 
 // ---- opcode table ------------------------------------------------------------------------------
 // One row per run of opcodes that share a handler; the handler gets the opcode's low nibble.
@@ -812,4 +812,4 @@ auto GSU::serialize(Archive& ar) -> void {
   ar(code_cache_, line_loaded_, plot_now_, plot_prev_, clock_budget_);
 }
 
-} // namespace snes::coprocessor
+} // namespace bitforge::coprocessor

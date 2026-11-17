@@ -5,7 +5,7 @@
 #include "snes/ppu/ppu.hpp"
 #include <algorithm>
 
-namespace snes::ppu {
+namespace bitforge::ppu {
 
 using namespace tables;
 
@@ -510,4 +510,4 @@ auto PPU::render_objects(int row, LineBuffer& out) -> void {
     }
 }
 
-} // namespace snes::ppu
+} // namespace bitforge::ppu

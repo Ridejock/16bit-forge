@@ -18,7 +18,7 @@
 #include <iterator>
 #include <optional>
 
-namespace snes::coprocessor {
+namespace bitforge::coprocessor {
 
 namespace {
 
@@ -374,4 +374,4 @@ auto sha256_hex(const std::vector<Byte>& data) -> std::string {
   return out;
 }
 
-} // namespace snes::coprocessor
+} // namespace bitforge::coprocessor

@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <cctype>
 
-namespace snes {
+namespace bitforge {
 
 namespace {
 
@@ -194,4 +194,4 @@ auto CheatEngine::lookup(Address address, Byte real) const -> Byte {
   return real;
 }
 
-} // namespace snes
+} // namespace bitforge

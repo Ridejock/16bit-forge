@@ -5,8 +5,8 @@
 // a frame counter mixed with the pad 1 state, and writes to the APU ports. That gives the save
 // state / rewind / threading tests a picture that changes with time and input.
 //
-// test_roms_dir(): optional folder of extra test ROMs (.sfc/.spc), from the SNES_TEST_ROMS_DIR
-// environment variable, else the SNES_TEST_ROMS_DIR CMake option (empty = none).
+// test_roms_dir(): optional folder of extra test ROMs (.sfc/.spc), from the BITFORGE_TEST_ROMS_DIR
+// environment variable, else the BITFORGE_TEST_ROMS_DIR CMake option (empty = none).
 #include <array>
 #include <cstdint>
 #include <cstdlib>
@@ -15,15 +15,15 @@
 #include <string>
 #include <vector>
 
-#ifndef SNES_TEST_ROMS_DIR
-#define SNES_TEST_ROMS_DIR ""
+#ifndef BITFORGE_TEST_ROMS_DIR
+#define BITFORGE_TEST_ROMS_DIR ""
 #endif
 
 namespace test_rom {
 
 inline auto test_roms_dir() -> std::string {
-    if (const char* env = std::getenv("SNES_TEST_ROMS_DIR"); env != nullptr && *env != '\0') return env;
-    return SNES_TEST_ROMS_DIR;
+    if (const char* env = std::getenv("BITFORGE_TEST_ROMS_DIR"); env != nullptr && *env != '\0') return env;
+    return BITFORGE_TEST_ROMS_DIR;
 }
 
 // `variant` changes the title and the colour formula, giving distinct ROMs.

@@ -3,7 +3,7 @@
 #include "snes/serialize.hpp"
 #include "snes/system.hpp"
 
-namespace snes::savestate {
+namespace bitforge::savestate {
 
 namespace {
 
@@ -102,4 +102,4 @@ auto decode(System& system, std::span<const uint8_t> file, Info& info) -> Result
     return system.load_state(file.subspan(file.size() - size), info.version) ? Result::Ok : Result::Corrupt;
 }
 
-} // namespace snes::savestate
+} // namespace bitforge::savestate

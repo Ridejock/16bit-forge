@@ -6,7 +6,7 @@
 #include <array>
 #include <string_view>
 
-namespace snes {
+namespace bitforge {
 
 // What is plugged into a controller port.
 enum class Device : uint8_t { None, Gamepad, Multitap, Mouse, SuperScope };
@@ -97,4 +97,4 @@ private:
     bool fire_held_ = false, pause_held_ = false;
 };
 
-} // namespace snes
+} // namespace bitforge

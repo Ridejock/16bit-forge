@@ -17,7 +17,7 @@
 #include <type_traits>
 #include <vector>
 
-namespace snes::frontend {
+namespace bitforge::frontend {
 
 enum class RunState : uint8_t { Stopped, Running, Paused };
 
@@ -129,7 +129,7 @@ public:
     // UI thread: host mouse motion (SNES counts, accumulated) and buttons, for a SNES Mouse.
     auto add_mouse_motion(int dx, int dy, bool left, bool right) -> void;
     // UI thread: the Super Scope's aim and buttons.
-    auto set_scope(const snes::ScopeInput& input) -> void;
+    auto set_scope(const bitforge::ScopeInput& input) -> void;
     // UI thread: the rewind and fast-forward hotkeys as held right now.
     auto set_speed_input(bool rewind, bool fast_forward) -> void;
 
@@ -162,7 +162,7 @@ private:
     uint64_t exit_after_frames_ = 0;
 
     std::array<std::atomic<uint32_t>, kPadCount> input_{};  // buttons | connected << 16
-    std::array<std::atomic<snes::Device>, kPortCount> devices_{snes::Device::Gamepad, snes::Device::Gamepad};
+    std::array<std::atomic<bitforge::Device>, kPortCount> devices_{bitforge::Device::Gamepad, bitforge::Device::Gamepad};
     std::atomic<int32_t> mouse_dx_{0};
     std::atomic<int32_t> mouse_dy_{0};
     std::atomic<uint32_t> mouse_buttons_{0};  // bit 0 left, bit 1 right
@@ -224,4 +224,4 @@ auto EmuThread::call(F&& fn) -> std::invoke_result_t<F&, Core&> {
     return result.get();
 }
 
-} // namespace snes::frontend
+} // namespace bitforge::frontend

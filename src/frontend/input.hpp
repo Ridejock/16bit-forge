@@ -10,7 +10,7 @@
 #include <string_view>
 #include <vector>
 
-namespace snes::frontend {
+namespace bitforge::frontend {
 
 // One entry per SNES pad button. `mask` is the bit in the $4218/$4219 word. The gamepad
 // defaults put the face buttons where the SNES has them (south = B, east = A, west = Y,
@@ -49,11 +49,11 @@ inline constexpr int kPortCount = 2;  // console controller ports
 // Super Scope none. So port 1 gamepad + port 2 multitap gives pads 1-5.
 inline constexpr int kPadCount = 5;
 
-using PortDevices = std::array<snes::Device, kPortCount>;
-inline constexpr PortDevices kDefaultPortDevices = {snes::Device::Gamepad, snes::Device::Gamepad};
+using PortDevices = std::array<bitforge::Device, kPortCount>;
+inline constexpr PortDevices kDefaultPortDevices = {bitforge::Device::Gamepad, bitforge::Device::Gamepad};
 // Whether `device` can go in `port` (the Super Scope needs port 2's light-gun latch).
-auto device_allowed(int port, snes::Device device) -> bool;
-auto parse_device(std::string_view id) -> std::optional<snes::Device>;
+auto device_allowed(int port, bitforge::Device device) -> bool;
+auto parse_device(std::string_view id) -> std::optional<bitforge::Device>;
 
 struct PadSlot {
     int port = -1;  // -1: this pad isn't plugged in anywhere
@@ -61,7 +61,7 @@ struct PadSlot {
 };
 auto pad_slots(const PortDevices& devices) -> std::array<PadSlot, kPadCount>;
 // "port 2" or "port 2, multitap 3": for the UI.
-auto pad_slot_label(const PadSlot& slot, snes::Device device) -> std::string;
+auto pad_slot_label(const PadSlot& slot, bitforge::Device device) -> std::string;
 
 // Mouse and Super Scope from the host mouse. Mouse buttons: left/right. Scope: left = Fire,
 // right = Cursor, middle = Pause, side button (X1) flips the Turbo switch.
@@ -73,7 +73,7 @@ struct PointerConfig {
 
 // The scope's aim from a pointer at (px, py) in window pixels over a picture drawn at
 // (vx, vy, vw, vh) with `lines` base lines. Off the picture = offscreen.
-auto scope_aim(float px, float py, float vx, float vy, float vw, float vh, int lines) -> snes::ScopeInput;
+auto scope_aim(float px, float py, float vx, float vy, float vw, float vh, int lines) -> bitforge::ScopeInput;
 // Draws the aim marker into a frame of `width` x `height` pixels showing `lines` base lines.
 auto draw_crosshair(uint32_t* pixels, int width, int height, int lines, int x, int y) -> void;inline constexpr std::string_view kAutoDevice = "auto";  // next free gamepad, in connection order
 inline constexpr std::string_view kNoDevice = "none";    // keyboard only (port 1) / unplugged (port 2)
@@ -243,4 +243,4 @@ auto guid_string(SDL_GUID guid) -> std::string;
 // "South (A)", "LB", "D-pad Up"...: Xbox-style labels, which is what an F310 in XInput mode shows.
 auto button_display_name(SDL_GamepadButton button) -> std::string_view;
 
-} // namespace snes::frontend
+} // namespace bitforge::frontend

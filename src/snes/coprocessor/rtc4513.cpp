@@ -3,7 +3,7 @@
 
 #include <algorithm>
 
-namespace snes::coprocessor {
+namespace bitforge::coprocessor {
 
 namespace {
 
@@ -216,4 +216,4 @@ auto RTC4513::tick_day() -> void {
   set_field(kYearLo, 0xF, (year + 1) % 100);
 }
 
-} // namespace snes::coprocessor
+} // namespace bitforge::coprocessor

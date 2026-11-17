@@ -19,7 +19,7 @@
 #include <ctime>
 #include <span>
 
-namespace snes::coprocessor {
+namespace bitforge::coprocessor {
 
 class RTC4513 {
 public:
@@ -66,4 +66,4 @@ private:
   auto tick_day() -> void;
 };
 
-} // namespace snes::coprocessor
+} // namespace bitforge::coprocessor

@@ -10,7 +10,7 @@
 #include <string_view>
 #include <utility>
 
-namespace snes::video {
+namespace bitforge::video {
 
 // Where the picture goes in the window, in pixels. The rest of the window is black.
 struct Viewport {
@@ -66,4 +66,4 @@ auto make_backend(BackendKind kind) -> std::unique_ptr<VideoBackend>;
 // Writes XRGB8888 pixels (tightly packed) to a BMP. Logs the result.
 auto save_bmp(const std::string& path, const uint32_t* pixels, int width, int height) -> bool;
 
-} // namespace snes::video
+} // namespace bitforge::video

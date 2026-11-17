@@ -3,7 +3,7 @@
 
 #include <array>
 
-namespace snes::apu {
+namespace bitforge::apu {
 
 namespace {
 
@@ -608,4 +608,4 @@ auto SPC700::execute(const Opcode& entry, Byte opcode) -> void {
   }
 }
 
-} // namespace snes::apu
+} // namespace bitforge::apu

@@ -6,7 +6,7 @@
 #include <cmath>
 #include <cstddef>
 
-namespace snes::frontend {
+namespace bitforge::frontend {
 
 namespace {
 
@@ -526,4 +526,4 @@ auto AudioOutput::service() -> void {
     }
 }
 
-} // namespace snes::frontend
+} // namespace bitforge::frontend

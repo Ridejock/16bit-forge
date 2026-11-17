@@ -5,7 +5,7 @@
 #include <array>
 #include <cstdint>
 
-namespace snes::ppu::tables {
+namespace bitforge::ppu::tables {
 
 // Layer ids used across the renderer. BG1-BG4 are 0-3, matching the TM/TS/TMW/TSW bit numbers.
 enum Layer : uint8_t { BG1 = 0, BG2 = 1, BG3 = 2, BG4 = 3, OBJ = 4, BACKDROP = 5, COLOR_WINDOW = 5 };
@@ -131,4 +131,4 @@ constexpr auto color_window_region(int sel, bool inside) -> bool {
     }
 }
 
-} // namespace snes::ppu::tables
+} // namespace bitforge::ppu::tables

@@ -4,7 +4,7 @@
 #include "snes/types.hpp"
 #include "snes/cpu/cpu_bus.hpp"
 
-namespace snes::cpu {
+namespace bitforge::cpu {
 
 // Register snapshot, for tests and debug views.
 struct Registers {
@@ -136,4 +136,4 @@ private:
   auto cycles_for(const Opcode& entry) const -> int;
 };
 
-} // namespace snes::cpu
+} // namespace bitforge::cpu

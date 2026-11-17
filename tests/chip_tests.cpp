@@ -42,8 +42,8 @@
 
 namespace {
 
-using namespace snes;
-using namespace snes::coprocessor;
+using namespace bitforge;
+using namespace bitforge::coprocessor;
 namespace fs = std::filesystem;
 
 int checks_failed = 0;

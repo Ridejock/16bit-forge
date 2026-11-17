@@ -11,10 +11,10 @@
 #include <iterator>
 #include <vector>
 
-using snes::Address;
-using snes::Byte;
-using snes::Word;
-using snes::ppu::PPU;
+using bitforge::Address;
+using bitforge::Byte;
+using bitforge::Word;
+using bitforge::ppu::PPU;
 
 namespace {
 
@@ -24,7 +24,7 @@ constexpr uint32_t kBlack = 0xFF000000;
 // Expected framebuffer pixel for a BGR555 color at full brightness (5-bit channels widened
 // by bit replication: 31 -> 255).
 constexpr auto rgb(Word c, int brightness = 15) -> uint32_t {
-    const auto& level = snes::ppu::tables::kBrightness[static_cast<size_t>(brightness)];
+    const auto& level = bitforge::ppu::tables::kBrightness[static_cast<size_t>(brightness)];
     return 0xFF000000u | (static_cast<uint32_t>(level[c & 0x1F]) << 16) |
            (static_cast<uint32_t>(level[(c >> 5) & 0x1F]) << 8) | level[(c >> 10) & 0x1F];
 }
@@ -48,9 +48,9 @@ auto check_eq(unsigned got, unsigned want, const char* what) -> void {
 
 // A bus + PPU (+ CPU) with helpers that poke registers the way a game would.
 struct Rig {
-    snes::memory::Bus bus;
+    bitforge::memory::Bus bus;
     PPU ppu;
-    snes::cpu::CPU65c816 cpu{bus};
+    bitforge::cpu::CPU65c816 cpu{bus};
     uint32_t clocks_run = 0;
 
     Rig() {
@@ -1234,8 +1234,8 @@ auto test_brightness_curve() -> void {
         check_eq(r.px(10, 10), want[i], "red 31 at brightness 15 / 7 / 0");
         check_eq(r.px(10, 10), rgb(kRed, levels[i]), "matches the table");
     }
-    check_eq(snes::ppu::tables::kBrightness[15][16], 132, "16 -> 132 at full brightness");
-    check_eq(snes::ppu::tables::kBrightness[0][31], 3, "31 at brightness 0");
+    check_eq(bitforge::ppu::tables::kBrightness[15][16], 132, "16 -> 132 at full brightness");
+    check_eq(bitforge::ppu::tables::kBrightness[0][31], 3, "31 at brightness 0");
 }
 
 // Mode 1 BG1 over a gray backdrop, every map entry tile 1. Tile 1's pixels come from `pixel`;
@@ -1543,9 +1543,9 @@ auto test_direct_color() -> void {
     };
     Rig r;
     scene(r, 0x01, 0x0001);
-    check_eq(r.px(5, 5), rgb(snes::ppu::tables::direct_color(0xC7, 0)), "direct color");
-    check_eq(snes::ppu::tables::direct_color(0xC7, 0), 0x601C, "BBGGGRRR -> 0BB000000RRR00");
-    check_eq(snes::ppu::tables::direct_color(0xFF, 7), 0x73DE, "all bits: each channel's low bit stays 0");
+    check_eq(r.px(5, 5), rgb(bitforge::ppu::tables::direct_color(0xC7, 0)), "direct color");
+    check_eq(bitforge::ppu::tables::direct_color(0xC7, 0), 0x601C, "BBGGGRRR -> 0BB000000RRR00");
+    check_eq(bitforge::ppu::tables::direct_color(0xFF, 7), 0x73DE, "all bits: each channel's low bit stays 0");
     Rig g;
     scene(g, 0x01, 0x1C01);  // palette bits 111 add the low bit of each channel
     check_eq(g.px(5, 5), rgb(0x705E), "palette bits");
@@ -1557,7 +1557,7 @@ auto test_direct_color() -> void {
 } // namespace
 
 int main() {
-    snes::utils::Logger::set_level(snes::utils::LogLevel::Error);
+    bitforge::utils::Logger::set_level(bitforge::utils::LogLevel::Error);
     struct Test { const char* name; void (*fn)(); };
     const Test tests[] = {
         {"OAM low/high tables", test_oam_tables},

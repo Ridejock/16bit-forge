@@ -4,7 +4,7 @@
 #include "utils/logging.hpp"
 #include <cstdio>
 
-namespace snes {
+namespace bitforge {
 
 System::System() 
     : cpu(bus) {
@@ -155,4 +155,4 @@ auto System::rtc_load(std::span<const uint8_t> data, int64_t now) -> bool {
     return chip && chip->rtc_load(data, now);
 }
 
-} // namespace snes
+} // namespace bitforge

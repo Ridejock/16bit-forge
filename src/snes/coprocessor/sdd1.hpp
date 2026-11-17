@@ -27,7 +27,7 @@
 #include <functional>
 #include <vector>
 
-namespace snes::coprocessor {
+namespace bitforge::coprocessor {
 
 class SDD1Decompressor {
 public:
@@ -102,4 +102,4 @@ private:
   auto rom_at(uint32_t offset) const -> Byte { return rom_.empty() ? Byte{0} : rom_[offset % rom_.size()]; }
 };
 
-} // namespace snes::coprocessor
+} // namespace bitforge::coprocessor

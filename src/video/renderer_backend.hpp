@@ -2,7 +2,7 @@
 #pragma once
 #include "video/video_backend.hpp"
 
-namespace snes::video {
+namespace bitforge::video {
 
 // The SDL_Renderer fallback: no shaders, so a preset only picks nearest or linear scaling
 // (its first pass's filter). Used when SDL_GPU is unavailable or chosen in View > Renderer.
@@ -29,4 +29,4 @@ private:
     SDL_ScaleMode scale_mode_ = SDL_SCALEMODE_NEAREST;
 };
 
-} // namespace snes::video
+} // namespace bitforge::video

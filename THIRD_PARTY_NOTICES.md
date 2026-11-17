@@ -1,6 +1,6 @@
 # Third-party notices
 
-snes_emulator is MIT-licensed (see LICENSE). It uses or contains the components below. Their
+16bit Forge is MIT-licensed (see LICENSE). It uses or contains the components below. Their
 licenses are reproduced as they require.
 
 | Component | Used as | License |
@@ -29,6 +29,9 @@ rounded corners in `shaders/crt_lottes.frag.hlsl`, and the filter chain itself a
 code (MIT), written from the published NTSC signal math and SNES video timing. No code from
 other NTSC, CRT-geometry or pixel-art filters is used; in particular nothing from blargg's
 snes_ntsc (LGPL), crt-geom, GTU or OmniScale (GPL).
+
+The 16bit Forge logo (`assets/branding/16bitForge_logo_512.png`) and the icons made from it
+(`assets/icons/`) are project artwork provided by Ervin Ashley, (c) 2026 Ervin Ashley.
 
 No game ROMs and no coprocessor firmware are included.
 

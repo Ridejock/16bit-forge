@@ -8,7 +8,7 @@
 #include <bit>
 #include <cstdint>
 
-namespace snes {
+namespace bitforge {
 
 constexpr auto rom_mirror(uint32_t address, uint32_t size) -> uint32_t {
   if (size == 0) return 0;
@@ -19,4 +19,4 @@ constexpr auto rom_mirror(uint32_t address, uint32_t size) -> uint32_t {
   return half + rom_mirror(address - half, size - half);
 }
 
-} // namespace snes
+} // namespace bitforge

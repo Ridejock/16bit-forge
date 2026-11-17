@@ -7,7 +7,7 @@
 #include <mutex>
 #include <vector>
 
-namespace snes::utils {
+namespace bitforge::utils {
 
 namespace {
 
@@ -190,7 +190,7 @@ auto Logger::log(LogChannel channel, LogLevel level, const char* fmt, ...) -> vo
   va_end(args);
 }
 
-#define SNES_LOGGER_SHORTHAND(name, lvl)                                    \
+#define BITFORGE_LOGGER_SHORTHAND(name, lvl)                                    \
   auto Logger::name(const char* fmt, ...) -> void {                         \
     va_list args;                                                           \
     va_start(args, fmt);                                                    \
@@ -204,11 +204,11 @@ auto Logger::log(LogChannel channel, LogLevel level, const char* fmt, ...) -> vo
     va_end(args);                                                           \
   }
 
-SNES_LOGGER_SHORTHAND(debug, Debug)
-SNES_LOGGER_SHORTHAND(info, Info)
-SNES_LOGGER_SHORTHAND(warning, Warning)
-SNES_LOGGER_SHORTHAND(error, Error)
+BITFORGE_LOGGER_SHORTHAND(debug, Debug)
+BITFORGE_LOGGER_SHORTHAND(info, Info)
+BITFORGE_LOGGER_SHORTHAND(warning, Warning)
+BITFORGE_LOGGER_SHORTHAND(error, Error)
 
-#undef SNES_LOGGER_SHORTHAND
+#undef BITFORGE_LOGGER_SHORTHAND
 
-} // namespace snes::utils
+} // namespace bitforge::utils

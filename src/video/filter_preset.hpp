@@ -4,7 +4,7 @@
 #include <string_view>
 #include <vector>
 
-namespace snes::video {
+namespace bitforge::video {
 
 // How a pass's output size is chosen (see shaders/presets.ini).
 enum class ScaleType { Source, Viewport };
@@ -54,4 +54,4 @@ auto find_preset(const std::vector<FilterPreset>& presets, const std::string& na
 inline constexpr size_t kMaxShaderParams = 16;  // FilterUniforms.Parameters in filter_common.hlsli
 auto parse_shader_params(std::string_view text) -> std::vector<FilterParam>;
 
-} // namespace snes::video
+} // namespace bitforge::video

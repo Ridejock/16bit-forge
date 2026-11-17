@@ -10,7 +10,7 @@
 #include <array>
 #include <cstdint>
 
-namespace snes::apu {
+namespace bitforge::apu {
 
 inline constexpr std::array<uint8_t, 64> kIplRom = {
     0xCD, 0xEF,        // $FFC0  mov x,#$EF
@@ -48,4 +48,4 @@ inline constexpr std::array<uint8_t, 64> kIplRom = {
     0xC0, 0xFF,        // $FFFE  reset vector: $FFC0
 };
 
-} // namespace snes::apu
+} // namespace bitforge::apu

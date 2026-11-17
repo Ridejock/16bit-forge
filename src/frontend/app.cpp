@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "frontend/app.hpp"
+#include "frontend/app_icon.hpp"
 #include "snes/savestate.hpp"
 #include "utils/logging.hpp"
 
@@ -14,12 +15,14 @@
 
 namespace fs = std::filesystem;
 
-namespace snes::frontend {
+namespace bitforge::frontend {
 
 namespace {
 
-constexpr const char* kMainTitle = "SNES Emulator";
-constexpr const char* kSettingsFile = "snes_emulator.ini";
+// Name, version and settings file come from CMake's project() (CMakeLists.txt).
+constexpr const char* kMainTitle = BITFORGE_TITLE;
+constexpr const char* kSettingsFile = BITFORGE_EXE_NAME ".ini";
+constexpr const char* kOldSettingsFile = "snes_emulator.ini";  // name before the 16bit Forge rename
 constexpr const char* kRomsFolder = "roms";
 constexpr const char* kPresetsFile = "shaders/presets.ini";
 // Log files next to the executable, one per sink. Trace output can run to hundreds of MB a
@@ -93,8 +96,14 @@ auto App::init() -> bool {
     base_dir_ = base ? base : "";
     settings_path_ = (fs::path(base_dir_) / kSettingsFile).string();
     roms_dir_ = (fs::path(base_dir_) / kRomsFolder).string();
-    settings_.load(settings_path_);
+    // One-time carry-over: until the new file has been written, read the pre-rename one.
+    const fs::path old_settings = fs::path(base_dir_) / kOldSettingsFile;
+    std::error_code ec;
+    const bool use_old = !fs::exists(settings_path_, ec) && fs::exists(old_settings, ec);
+    settings_.load(use_old ? old_settings.string() : settings_path_);
     apply_log_settings();
+    utils::Logger::info("%s %s - %s", BITFORGE_TITLE, BITFORGE_VERSION, BITFORGE_TAGLINE);
+    if (use_old) utils::Logger::info("Settings read from %s; they are saved to %s from now on", kOldSettingsFile, kSettingsFile);
     // The emulation thread isn't running yet: set up what it will own directly.
     EmuThread::Core& core = emu_thread_.core();
     core.emu.set_data_dir(base_dir_);
@@ -128,6 +137,7 @@ auto App::init() -> bool {
         utils::Logger::error("Main window creation failed: %s", SDL_GetError());
         return false;
     }
+    set_app_icon(main_window_);
     SDL_SetWindowMinimumSize(main_window_, kMainMinWidth, kMainMinHeight);
 
     main_renderer_ = SDL_CreateRenderer(main_window_, nullptr);
@@ -399,7 +409,7 @@ auto App::handle_game_event(const SDL_Event& event) -> void {
     case SDL_EVENT_WINDOW_MOUSE_ENTER:
     case SDL_EVENT_WINDOW_MOUSE_LEAVE:
         pointer_inside_ = event.type == SDL_EVENT_WINDOW_MOUSE_ENTER;
-        if (uses(snes::Device::SuperScope) && pointer_inside_) SDL_HideCursor();
+        if (uses(bitforge::Device::SuperScope) && pointer_inside_) SDL_HideCursor();
         else if (!mouse_captured_) SDL_ShowCursor();
         break;
     case SDL_EVENT_MOUSE_MOTION:
@@ -412,7 +422,7 @@ auto App::handle_game_event(const SDL_Event& event) -> void {
     case SDL_EVENT_MOUSE_BUTTON_UP: {
         const bool down = event.type == SDL_EVENT_MOUSE_BUTTON_DOWN;
         // The first click on the picture captures the mouse for a SNES Mouse (Esc releases it).
-        if (down && uses(snes::Device::Mouse) && !mouse_captured_) {
+        if (down && uses(bitforge::Device::Mouse) && !mouse_captured_) {
             set_mouse_captured(true);
             break;
         }
@@ -439,7 +449,7 @@ auto App::handle_game_event(const SDL_Event& event) -> void {
     }
 }
 
-auto App::uses(snes::Device device) const -> bool {
+auto App::uses(bitforge::Device device) const -> bool {
     return std::find(settings_.port_devices.begin(), settings_.port_devices.end(), device) != settings_.port_devices.end();
 }
 
@@ -458,14 +468,14 @@ auto App::send_input() -> void {
         // Pad 1 also takes the keyboard, so it's always plugged in.
         emu_thread_.set_input(p, input_.state(p), p == 0 || input_.assigned(p) != nullptr);
     }
-    if (uses(snes::Device::Mouse)) {
+    if (uses(bitforge::Device::Mouse)) {
         const auto [dx, dy] = mouse_captured_ ? input_.take_mouse_motion() : std::array<int, 2>{};
         emu_thread_.add_mouse_motion(dx, dy, mouse_captured_ && input_.mouse_left(), mouse_captured_ && input_.mouse_right());
     } else if (mouse_captured_) {
         set_mouse_captured(false);  // the port changed away from the mouse
     }
-    if (!uses(snes::Device::SuperScope) && !mouse_captured_ && !SDL_CursorVisible()) SDL_ShowCursor();
-    if (uses(snes::Device::SuperScope) && game_.is_open()) {
+    if (!uses(bitforge::Device::SuperScope) && !mouse_captured_ && !SDL_CursorVisible()) SDL_ShowCursor();
+    if (uses(bitforge::Device::SuperScope) && game_.is_open()) {
         const FrameImage& image = emu_thread_.frame();
         int out_w = 0, out_h = 0;
         SDL_GetWindowSizeInPixels(game_.window(), &out_w, &out_h);
@@ -485,7 +495,7 @@ auto App::send_input() -> void {
 
 auto App::present_game(const FrameImage& image) -> void {
     const uint32_t* pixels = image.pixels.empty() ? nullptr : image.pixels.data();
-    if (pixels && uses(snes::Device::SuperScope) && settings_.pointer.crosshair && !scope_aim_.offscreen) {
+    if (pixels && uses(bitforge::Device::SuperScope) && settings_.pointer.crosshair && !scope_aim_.offscreen) {
         overlay_ = image.pixels;
         draw_crosshair(overlay_.data(), image.width, image.height, picture_lines(image.height), scope_aim_.x, scope_aim_.y);
         pixels = overlay_.data();
@@ -999,13 +1009,13 @@ auto App::draw_console_ports() -> void {
     bool changed = false;
     for (int p = 0; p < kPortCount; p++) {
         ImGui::PushID(1000 + p);
-        snes::Device& device = settings_.port_devices[static_cast<size_t>(p)];
+        bitforge::Device& device = settings_.port_devices[static_cast<size_t>(p)];
         ImGui::AlignTextToFramePadding();
         ImGui::Text("Port %d", p + 1);
         ImGui::SameLine();
         ImGui::SetNextItemWidth(ImGui::GetFontSize() * 12.f);
-        if (ImGui::BeginCombo("##port", snes::device_info(device).name.data())) {
-            for (const auto& d : snes::kDevices) {
+        if (ImGui::BeginCombo("##port", bitforge::device_info(device).name.data())) {
+            for (const auto& d : bitforge::kDevices) {
                 if (!device_allowed(p, d.device)) continue;
                 if (ImGui::Selectable(d.name.data(), device == d.device)) {
                     device = d.device;
@@ -1017,16 +1027,16 @@ auto App::draw_console_ports() -> void {
         if (p == 0) ImGui::SameLine();
         ImGui::PopID();
     }
-    if (uses(snes::Device::Mouse) || uses(snes::Device::SuperScope)) {
+    if (uses(bitforge::Device::Mouse) || uses(bitforge::Device::SuperScope)) {
         PointerConfig& pointer = settings_.pointer;
-        if (uses(snes::Device::Mouse)) {
+        if (uses(bitforge::Device::Mouse)) {
             ImGui::SetNextItemWidth(ImGui::GetFontSize() * 8.f);
             ImGui::SliderInt("Mouse speed", &pointer.mouse_speed, 10, 400, "%d%%");
             if (ImGui::IsItemDeactivatedAfterEdit()) changed = true;
             ImGui::SameLine();
             ImGui::TextDisabled("Click the game window to capture the mouse, Esc to release.");
         }
-        if (uses(snes::Device::SuperScope)) {
+        if (uses(bitforge::Device::SuperScope)) {
             if (ImGui::Checkbox("Crosshair", &pointer.crosshair)) changed = true;
             ImGui::SameLine();
             bool turbo = input_.scope_turbo();
@@ -1138,7 +1148,7 @@ auto App::apply_cheats() -> void {
 
 // What a code does, for the tooltip: "$C4A704 = $C9 (ROM)", one line per part.
 static auto describe_cheat(const std::string& code) -> std::string {
-    const auto cheats = snes::decode_cheat(code);
+    const auto cheats = bitforge::decode_cheat(code);
     if (!cheats) return "not a valid code";
     std::string out;
     for (const auto& c : *cheats) {
@@ -1147,7 +1157,7 @@ static auto describe_cheat(const std::string& code) -> std::string {
             std::snprintf(line, sizeof(line), "$%06X = $%02X if $%02X (read)\n", c.address, c.value, *c.compare);
         } else {
             std::snprintf(line, sizeof(line), "$%06X = $%02X (%s)\n", c.address, c.value,
-                          c.kind == snes::Cheat::Kind::RamWrite ? "WRAM, written every frame" : "read");
+                          c.kind == bitforge::Cheat::Kind::RamWrite ? "WRAM, written every frame" : "read");
         }
         out += line;
     }
@@ -1203,7 +1213,7 @@ auto App::draw_cheats_panel() -> void {
     ImGui::SameLine();
     if (ImGui::Button("Add")) {
         const std::string code = cheat_code_.data();
-        if (snes::decode_cheat(code)) {
+        if (bitforge::decode_cheat(code)) {
             cheats_.push_back({true, code, cheat_description_.data()});
             cheat_code_.fill(0);
             cheat_description_.fill(0);
@@ -1393,7 +1403,7 @@ auto App::draw_state_menu(bool save) -> void {
             ImGui::Text("Slot %d, saved %s (%s)", i + 1, view.when.c_str(), age.c_str());
             ImGui::Text("Play time %s since boot (frame %llu)", Emulator::play_time_text(view.frame).c_str(),
                         static_cast<unsigned long long>(view.frame));
-            if (view.version != snes::savestate::kVersion) ImGui::TextDisabled("Saved by an older version (format %u)", view.version);
+            if (view.version != bitforge::savestate::kVersion) ImGui::TextDisabled("Saved by an older version (format %u)", view.version);
             ImGui::EndTooltip();
         }
         ImGui::PopID();
@@ -1505,4 +1515,4 @@ auto App::save_settings() -> void {
     if (!settings_.save(settings_path_)) utils::Logger::warning("Could not write %s", settings_path_.c_str());
 }
 
-} // namespace snes::frontend
+} // namespace bitforge::frontend

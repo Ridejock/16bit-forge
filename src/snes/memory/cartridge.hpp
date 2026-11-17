@@ -11,7 +11,7 @@
 #include "snes/serialize.hpp"
 #include "snes/types.hpp"
 
-namespace snes::memory {
+namespace bitforge::memory {
 
 struct CartridgeHeader {
   char name[21];
@@ -95,4 +95,4 @@ private:
   auto sram_offset(Address address) const -> std::optional<Address>;
 };
 
-} // namespace snes::memory
+} // namespace bitforge::memory

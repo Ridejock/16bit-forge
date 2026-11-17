@@ -3,7 +3,7 @@
 
 #include <string>
 
-namespace snes::utils {
+namespace bitforge::utils {
 
 namespace {
 
@@ -116,4 +116,4 @@ auto LogView::draw() -> bool {
     return changed;
 }
 
-} // namespace snes::utils
+} // namespace bitforge::utils

@@ -2,7 +2,7 @@
 #pragma once
 #include <cstdint>
 
-namespace snes {
+namespace bitforge {
 
 // Unsigned types
 using u8 = uint8_t;
@@ -21,4 +21,4 @@ using Byte = u8;
 using Word = u16;
 using Address = u32;  // SNES uses 24-bit addresses
 
-} // namespace snes
+} // namespace bitforge

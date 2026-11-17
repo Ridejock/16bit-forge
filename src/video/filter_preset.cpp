@@ -7,7 +7,7 @@
 #include <fstream>
 #include <sstream>
 
-namespace snes::video {
+namespace bitforge::video {
 
 namespace {
 
@@ -189,4 +189,4 @@ auto parse_shader_params(std::string_view text) -> std::vector<FilterParam> {
     return params;
 }
 
-} // namespace snes::video
+} // namespace bitforge::video

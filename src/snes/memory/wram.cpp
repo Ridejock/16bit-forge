@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "snes/memory/wram.hpp"
 
-namespace snes::memory {
+namespace bitforge::memory {
 
 WRAM::WRAM() {
   reset();
@@ -26,4 +26,4 @@ auto WRAM::write(Address address, Byte value) -> void {
   }
 }
 
-} // namespace snes::memory
+} // namespace bitforge::memory

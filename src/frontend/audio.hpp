@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-namespace snes::frontend {
+namespace bitforge::frontend {
 
 // Steers the playback queue toward a target depth by nudging the SDL stream's frequency ratio
 // (dynamic rate control). A PI controller on the smoothed queue depth: the proportional term
@@ -224,4 +224,4 @@ private:
     int capture_rate_ = 0;
 };
 
-} // namespace snes::frontend
+} // namespace bitforge::frontend

@@ -4,7 +4,7 @@
 
 #include <array>
 
-namespace snes::cpu {
+namespace bitforge::cpu {
 
 namespace {
 
@@ -647,4 +647,4 @@ auto CPU65c816::print_state() const -> void {
                       flag(D) ? 'D' : 'd', flag(I) ? 'I' : 'i', flag(Z) ? 'Z' : 'z', flag(C) ? 'C' : 'c');
 }
 
-} // namespace snes::cpu
+} // namespace bitforge::cpu

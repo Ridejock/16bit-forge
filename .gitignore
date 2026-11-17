@@ -49,6 +49,7 @@ compile_commands.json
 *.cht
 *.log
 *.wav
-# User config (the release ships config/snes_emulator.ini as the default)
+# User config (the release ships config/16bitForge.ini as the default; snes_emulator.ini is the pre-rename name)
+/16bitForge.ini
 /snes_emulator.ini
 imgui.ini

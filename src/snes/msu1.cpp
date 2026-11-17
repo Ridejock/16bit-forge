@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <filesystem>
 
-namespace snes {
+namespace bitforge {
 
 namespace {
 constexpr char kId[] = "S-MSU1";
@@ -182,4 +182,4 @@ auto Msu1::serialize(Archive& ar) -> void {
   }
 }
 
-} // namespace snes
+} // namespace bitforge

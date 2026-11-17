@@ -29,7 +29,7 @@
 #include <memory>
 #include <vector>
 
-namespace snes::coprocessor {
+namespace bitforge::coprocessor {
 
 // The graphics decompressor: an adaptive binary arithmetic decoder with per-context
 // probability states and a move-to-front pixel predictor, for 1, 2 and 4 bits per pixel
@@ -137,4 +137,4 @@ private:
   auto alu_divide() -> void;
 };
 
-} // namespace snes::coprocessor
+} // namespace bitforge::coprocessor

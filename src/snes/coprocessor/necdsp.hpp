@@ -8,7 +8,7 @@
 
 #include <optional>
 
-namespace snes::coprocessor {
+namespace bitforge::coprocessor {
 
 // One window of the S-CPU address space: banks lo-hi (and their $80 mirrors), offsets lo-hi.
 struct NecWindow {
@@ -51,4 +51,4 @@ private:
   int64_t clock_budget_ = 0;  // in units of 1/(clock_hz * 11) master clocks
 };
 
-} // namespace snes::coprocessor
+} // namespace bitforge::coprocessor

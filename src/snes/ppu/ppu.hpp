@@ -7,7 +7,7 @@
 #include <array>
 #include <vector>
 
-namespace snes::ppu {
+namespace bitforge::ppu {
 
 class PPU {
 public:
@@ -236,4 +236,4 @@ private:
     auto oam_read() -> Byte;
 };
 
-} // namespace snes::ppu
+} // namespace bitforge::ppu

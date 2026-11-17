@@ -13,7 +13,7 @@
 
 namespace fs = std::filesystem;
 
-namespace snes::frontend {
+namespace bitforge::frontend {
 
 namespace {
 
@@ -144,7 +144,7 @@ auto Emulator::set_port_connected(int port, bool connected) -> void {
     if (system_) system_->set_port_connected(port, connected);
 }
 
-auto Emulator::set_port_device(int port, snes::Device device) -> void {
+auto Emulator::set_port_device(int port, bitforge::Device device) -> void {
     if (system_) system_->set_port_device(port, device);
 }
 
@@ -156,7 +156,7 @@ auto Emulator::add_mouse(int port, int dx, int dy, bool left, bool right) -> voi
     if (system_) system_->add_mouse(port, dx, dy, left, right);
 }
 
-auto Emulator::set_scope(int port, const snes::ScopeInput& input) -> void {
+auto Emulator::set_scope(int port, const bitforge::ScopeInput& input) -> void {
     if (system_) system_->set_scope(port, input);
 }
 
@@ -382,4 +382,4 @@ auto Emulator::update_test_pattern() -> void {
     }
 }
 
-} // namespace snes::frontend
+} // namespace bitforge::frontend

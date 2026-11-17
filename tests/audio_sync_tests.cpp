@@ -16,7 +16,7 @@
 #include <random>
 #include <vector>
 
-using snes::frontend::AudioOutput;
+using bitforge::frontend::AudioOutput;
 
 namespace {
 
@@ -449,7 +449,7 @@ auto run_lifecycle(int& passed) -> int {
 }  // namespace
 
 int main() {
-    snes::utils::Logger::set_level(snes::utils::LogLevel::Error);
+    bitforge::utils::Logger::set_level(bitforge::utils::LogLevel::Error);
     SDL_Init(0);
     std::printf("=== Audio output (FIFO + rate control) tests ===\n\n");
     struct Case { Scenario s; uint64_t max_underruns; double max_jump; double min_jump = 0.0; };
@@ -503,13 +503,13 @@ int main() {
         const int before = failures;
         std::vector<int16_t> out;
         const std::vector<int16_t> apu = {1000, -1000, 30000, -30000, 7, -7};
-        snes::frontend::mix_sources(apu, std::vector<int16_t>{}, 100, 100, out);
+        bitforge::frontend::mix_sources(apu, std::vector<int16_t>{}, 100, 100, out);
         check(out == apu, "APU alone at 100% passes through");
-        snes::frontend::mix_sources(apu, std::vector<int16_t>{2000, 2000, 10000, -10000, 0, 0}, 100, 50, out);
+        bitforge::frontend::mix_sources(apu, std::vector<int16_t>{2000, 2000, 10000, -10000, 0, 0}, 100, 50, out);
         check((out == std::vector<int16_t>{2000, 0, 32767, -32768, 7, -7}), "MSU-1 at 50%, saturated");
-        snes::frontend::mix_sources(apu, std::vector<int16_t>{2000, 2000, 0, 0, 0, 0}, 50, 100, out);
+        bitforge::frontend::mix_sources(apu, std::vector<int16_t>{2000, 2000, 0, 0, 0, 0}, 50, 100, out);
         check(out[0] == 1500 && out[1] == 500, "master volume scales both");
-        snes::frontend::mix_sources(apu, std::vector<int16_t>{1, 2}, 100, 100, out);
+        bitforge::frontend::mix_sources(apu, std::vector<int16_t>{1, 2}, 100, 100, out);
         check(out.size() == apu.size() && out[0] == 1001 && out[2] == 30000, "a shorter MSU-1 buffer mixes what it has");
         std::printf("  %-40s ... %s\n", "Mixer: APU + MSU-1", failures == before ? "PASS" : "FAIL");
         if (failures == before) passed++;
@@ -518,7 +518,7 @@ int main() {
     // WAV writer: header sizes are patched on close.
     {
         const char* path = "audio_sync_tests.wav";
-        snes::frontend::WavWriter w;
+        bitforge::frontend::WavWriter w;
         const int before = failures;
         check(w.open(path, kSource), "wav open");
         std::vector<int16_t> pcm(2000, 1234);

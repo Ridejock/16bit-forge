@@ -4,7 +4,7 @@
 #include <array>
 #include <cstdint>
 
-namespace snes::apu {
+namespace bitforge::apu {
 
 // Gaussian interpolation kernel: the 512-entry table in the S-DSP's ROM (hardware data, as listed
 // in fullsnes "4-Point Gaussian Interpolation"). A voice mixes its four newest BRR samples with weights
@@ -63,4 +63,4 @@ inline constexpr std::array<uint16_t, 32> kCounterOffset = {
      536,    0, 1040,  536,    0, 1040,    0,    0,
 };
 
-} // namespace snes::apu
+} // namespace bitforge::apu

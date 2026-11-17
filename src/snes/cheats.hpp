@@ -21,7 +21,7 @@
 #include <string_view>
 #include <vector>
 
-namespace snes {
+namespace bitforge {
 
 struct Cheat {
   enum class Kind : uint8_t { ReadOverride, RamWrite };
@@ -76,4 +76,4 @@ private:
   bool banks_[256] = {};       // normalized banks with a read override
 };
 
-} // namespace snes
+} // namespace bitforge

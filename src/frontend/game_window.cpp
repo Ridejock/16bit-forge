@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
 #include "frontend/game_window.hpp"
+#include "frontend/app_icon.hpp"
 #include "utils/logging.hpp"
 
 #include <algorithm>
 #include <cmath>
 
-namespace snes::frontend {
+namespace bitforge::frontend {
 
 namespace {
 
@@ -48,6 +49,7 @@ auto GameWindow::open(const char* title, const ViewOptions& view, video::Backend
     window_ = SDL_CreateWindow(title, window_width(view), kBaseHeight * view.scale,
                                SDL_WINDOW_RESIZABLE);
     if (!window_) return false;
+    set_app_icon(window_);
     SDL_SetWindowMinimumSize(window_, kBaseWidth, kBaseHeight);
     if (!create_backend(wanted, filter)) {
         close();
@@ -124,4 +126,4 @@ auto GameWindow::request_screenshot(std::string path) -> void {
     if (backend_) backend_->request_screenshot(std::move(path));
 }
 
-} // namespace snes::frontend
+} // namespace bitforge::frontend

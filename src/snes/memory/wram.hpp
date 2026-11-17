@@ -5,7 +5,7 @@
 #include "snes/serialize.hpp"
 #include "snes/types.hpp"
 
-namespace snes::memory {
+namespace bitforge::memory {
 
 class WRAM {
 public:
@@ -21,4 +21,4 @@ private:
   std::array<Byte, SIZE> data;
 };
 
-} // namespace snes::memory
+} // namespace bitforge::memory

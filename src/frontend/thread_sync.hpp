@@ -8,7 +8,7 @@
 #include <utility>
 #include <vector>
 
-namespace snes::frontend {
+namespace bitforge::frontend {
 
 // Latest-value mailbox between one writer thread and one reader thread (lock-free triple
 // buffer). The writer fills write_buffer() and publish()es it; the reader acquire()s the newest
@@ -101,4 +101,4 @@ private:
     bool closed_ = true;
 };
 
-} // namespace snes::frontend
+} // namespace bitforge::frontend

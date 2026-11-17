@@ -4,7 +4,7 @@
 #include "video/gpu_backend.hpp"
 #include "video/renderer_backend.hpp"
 
-namespace snes::video {
+namespace bitforge::video {
 
 auto backend_kind_name(BackendKind kind) -> const char* {
     return kind == BackendKind::Gpu ? "gpu" : "sdl";
@@ -34,4 +34,4 @@ auto save_bmp(const std::string& path, const uint32_t* pixels, int width, int he
     return ok;
 }
 
-} // namespace snes::video
+} // namespace bitforge::video

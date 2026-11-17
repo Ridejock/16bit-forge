@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "snes/coprocessor/necdsp.hpp"
 
-namespace snes::coprocessor {
+namespace bitforge::coprocessor {
 
 namespace {
 // NTSC master clock = 236.25 MHz / 11. One master clock is worth clock_hz * 11 budget units and
@@ -59,4 +59,4 @@ auto NecDsp::serialize(Archive& ar) -> void {
   ar(clock_budget_);
 }
 
-} // namespace snes::coprocessor
+} // namespace bitforge::coprocessor

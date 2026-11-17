@@ -8,7 +8,7 @@
 #include <algorithm>
 #include <chrono>
 
-namespace snes::frontend {
+namespace bitforge::frontend {
 
 namespace {
 
@@ -25,13 +25,13 @@ constexpr int kMaxFastFrames = 60;                  // per displayed frame, what
 constexpr size_t kSilentFrameSamples = 2 * 533;     // one frame of stereo at 32040 Hz
 
 // ScopeInput in one word: x (bits 0-8), y (9-17), offscreen, fire, cursor, turbo, pause (18-22).
-auto pack_scope(const snes::ScopeInput& s) -> uint32_t {
+auto pack_scope(const bitforge::ScopeInput& s) -> uint32_t {
     return static_cast<uint32_t>(s.x & 0x1FF) | static_cast<uint32_t>(s.y & 0x1FF) << 9 | (s.offscreen ? 1u << 18 : 0u) |
            (s.fire ? 1u << 19 : 0u) | (s.cursor ? 1u << 20 : 0u) | (s.turbo ? 1u << 21 : 0u) | (s.pause ? 1u << 22 : 0u);
 }
 
-auto unpack_scope(uint32_t v) -> snes::ScopeInput {
-    snes::ScopeInput s;
+auto unpack_scope(uint32_t v) -> bitforge::ScopeInput {
+    bitforge::ScopeInput s;
     s.x = static_cast<int>(v & 0x1FF);
     s.y = static_cast<int>((v >> 9) & 0x1FF);
     s.offscreen = (v >> 18) & 1;
@@ -86,7 +86,7 @@ auto EmuThread::add_mouse_motion(int dx, int dy, bool left, bool right) -> void 
     mouse_buttons_.store((left ? 1u : 0u) | (right ? 2u : 0u), std::memory_order_relaxed);
 }
 
-auto EmuThread::set_scope(const snes::ScopeInput& input) -> void { scope_.store(pack_scope(input), std::memory_order_relaxed); }
+auto EmuThread::set_scope(const bitforge::ScopeInput& input) -> void { scope_.store(pack_scope(input), std::memory_order_relaxed); }
 
 auto EmuThread::set_speed_input(bool rewind, bool fast_forward) -> void {
     speed_input_.store((rewind ? kRewindHeld : 0u) | (fast_forward ? kFastHeld : 0u), std::memory_order_relaxed);
@@ -203,11 +203,11 @@ auto EmuThread::read_input() -> void {
     const auto slots = pad_slots(devices);
     // A gamepad port with no controller behind its pad reads as empty; a multitap is always there.
     for (int p = 0; p < kPortCount; p++) {
-        snes::Device device = devices[static_cast<size_t>(p)];
-        if (device == snes::Device::Gamepad) {
+        bitforge::Device device = devices[static_cast<size_t>(p)];
+        if (device == bitforge::Device::Gamepad) {
             const auto pad = std::find_if(slots.begin(), slots.end(), [p](const PadSlot& s) { return s.port == p; });
             const bool connected = pad != slots.end() && (input_[static_cast<size_t>(pad - slots.begin())].load(std::memory_order_relaxed) & kConnected);
-            if (!connected) device = snes::Device::None;
+            if (!connected) device = bitforge::Device::None;
         }
         core_.emu.set_port_device(p, device);
     }
@@ -220,8 +220,8 @@ auto EmuThread::read_input() -> void {
     const int dy = mouse_dy_.exchange(0, std::memory_order_relaxed);
     const uint32_t buttons = mouse_buttons_.load(std::memory_order_relaxed);
     for (int p = 0; p < kPortCount; p++) {
-        if (devices[static_cast<size_t>(p)] == snes::Device::Mouse) core_.emu.add_mouse(p, dx, dy, buttons & 1, buttons & 2);
-        if (devices[static_cast<size_t>(p)] == snes::Device::SuperScope) core_.emu.set_scope(p, unpack_scope(scope_.load(std::memory_order_relaxed)));
+        if (devices[static_cast<size_t>(p)] == bitforge::Device::Mouse) core_.emu.add_mouse(p, dx, dy, buttons & 1, buttons & 2);
+        if (devices[static_cast<size_t>(p)] == bitforge::Device::SuperScope) core_.emu.set_scope(p, unpack_scope(scope_.load(std::memory_order_relaxed)));
     }
 }
 
@@ -394,4 +394,4 @@ auto EmuThread::wait_for_audio(uint64_t deadline_ns) -> bool {
     return true;
 }
 
-} // namespace snes::frontend
+} // namespace bitforge::frontend

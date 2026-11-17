@@ -29,7 +29,7 @@
 #include <span>
 #include <string>
 
-namespace snes {
+namespace bitforge {
 
 class Msu1 {
 public:
@@ -85,4 +85,4 @@ private:
   uint32_t phase_ = 0;         // output position between them, in 1/rate steps
 };
 
-} // namespace snes
+} // namespace bitforge

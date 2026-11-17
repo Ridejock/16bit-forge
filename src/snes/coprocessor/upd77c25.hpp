@@ -18,7 +18,7 @@
 #include <span>
 #include <vector>
 
-namespace snes::coprocessor {
+namespace bitforge::coprocessor {
 
 struct NecVariant {
   const char* name;
@@ -107,4 +107,4 @@ private:
   auto ram(uint32_t index) -> uint16_t& { return data_ram_[index % data_ram_.size()]; }
 };
 
-} // namespace snes::coprocessor
+} // namespace bitforge::coprocessor

@@ -9,7 +9,7 @@
 #include <cstdio>
 #include <string>
 
-namespace snes::coprocessor {
+namespace bitforge::coprocessor {
 
 namespace {
 
@@ -581,4 +581,4 @@ auto SPC7110::serialize(Archive& ar) -> void {
   if (ar.loading() && dcu_offset_ >= 32) ar.fail();
 }
 
-} // namespace snes::coprocessor
+} // namespace bitforge::coprocessor

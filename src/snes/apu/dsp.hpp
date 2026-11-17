@@ -6,7 +6,7 @@
 #include <array>
 #include <vector>
 
-namespace snes::apu {
+namespace bitforge::apu {
 
 // S-DSP: 8 BRR voices with Gaussian interpolation, ADSR/GAIN envelopes, noise, pitch modulation
 // and an 8-tap FIR echo, mixed to 32 kHz stereo.
@@ -141,4 +141,4 @@ private:
   auto tick_rate_clock() -> void;
 };
 
-} // namespace snes::apu
+} // namespace bitforge::apu

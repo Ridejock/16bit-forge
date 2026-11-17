@@ -1,6 +1,9 @@
 # 16bit-forge 
 
-A Super Nintendo / Super Famicom emulator written in C++20, with a Dear ImGui frontend on SDL3.
+*Forged for the 16-bit era.*
+
+16bit Forge is a Super Nintendo / Super Famicom (SNES) emulator written in C++20, with a Dear
+ImGui frontend on SDL3.
 It aims for accuracy first: the CPU, PPU and APU are cycle-based, and the enhancement chips
 are emulated at the instruction level rather than with game-specific hacks.
 
@@ -63,7 +66,9 @@ emulator.
 - The sound chip's 64-byte boot ROM (IPL) is built in, as in other SNES emulators; see
   THIRD_PARTY_NOTICES.md.
 - Saves go next to the program: `saves/` (battery RAM, `.srm`, and clock, `.rtc`),
-  `states/` (save states, `.sst`), `cheats/` (`.cht`), `logs/`.
+  `states/` (save states, `.sst`), `cheats/` (`.cht`), `logs/`. Settings are in
+  `16bitForge.ini`; a `snes_emulator.ini` from before the rename is read once if there is no
+  `16bitForge.ini` yet.
 
 ## Controls
 
@@ -87,7 +92,7 @@ box):
 | Load state 1-10 | F1 ... F10 | |
 | Fullscreen | F11 (Esc leaves) | |
 
-Command line: `snes_emulator [rom.sfc] [--renderer gpu|sdl] [--filter <preset>]
+Command line: `16bitForge [rom.sfc] [--renderer gpu|sdl] [--filter <preset>]
 [--screenshot out.bmp] [--exit-after-frames N] [--record-audio out.wav]`.
 
 ## Building
@@ -106,13 +111,14 @@ the first time). To use a shadercross you already have, pass
 cmake -S . -B build -A x64
 cmake --build build --config Release --parallel
 ctest --test-dir build -C Release --output-on-failure
-build\Release\snes_emulator.exe
+build\Release\16bitForge.exe
 ```
 
 Tip: if the shadercross build fails on long paths, set the `EMERALD_CACHE_DIR` environment
 variable to a short folder such as `C:\emc`.
 
-To make the release zip: `tools\package_windows.ps1` (or `cd build; cpack -C Release`).
+To make the release zip (`16bitForge-<version>-windows-x64.zip`): `tools\package_windows.ps1`
+(or `cd build; cpack -C Release`).
 
 ### Linux
 
@@ -125,7 +131,7 @@ sudo apt install build-essential cmake ninja-build git clang python3 \
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ctest --test-dir build --output-on-failure
-./build/snes_emulator
+./build/16bitForge
 ```
 
 With GCC 14 or newer, install Clang too: the shadercross tool is then built with Clang
@@ -133,10 +139,10 @@ With GCC 14 or newer, install Clang too: the shadercross tool is then built with
 
 ### Tests
 
-`ctest` runs nine suites (CPU, PPU, APU, save states, enhancement chips, audio sync, input,
-frame pacing, threading). They need no ROM files: they use hand-written instruction tests and
+`ctest` runs ten suites (CPU, PPU, APU, save states, enhancement chips, audio sync, input,
+filter presets, frame pacing, threading). They need no ROM files: they use hand-written instruction tests and
 a small test ROM generated in code. To also run free test ROMs (for example PeterLemon's or
-gilyon's SNES test suites), point `SNES_TEST_ROMS_DIR` (CMake option or environment variable)
+gilyon's SNES test suites), point `BITFORGE_TEST_ROMS_DIR` (CMake option or environment variable)
 at a folder of `.sfc` / `.spc` files, or pass ROM paths on a suite's command line.
 
 ## Credits
@@ -155,10 +161,13 @@ researched the SNES and wrote it down:
 - Peter Lemon (krom) - SNES test ROMs used during development (not included)
 - The SDL and Dear ImGui projects
 
+Logo and icons: project artwork by Ervin Ashley (`assets/`; the icon files are rebuilt with
+`python tools/make_icons.py`, which needs Pillow).
+
 ## License
 
 MIT - see [LICENSE](LICENSE). Third-party components and their licenses are listed in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-"Super Nintendo", "Super Famicom" and the game titles above are trademarks of their owners.
-This project is not affiliated with or endorsed by Nintendo.
+"Super Nintendo", "Super Famicom", "SNES" and the game titles above are trademarks of their
+owners. This project is not affiliated with or endorsed by Nintendo.

@@ -3,7 +3,7 @@
 
 #include <algorithm>
 
-namespace snes::coprocessor {
+namespace bitforge::coprocessor {
 
 namespace {
 
@@ -347,4 +347,4 @@ auto UPD77C25::serialize(Archive& ar) -> void {
   for (auto& word : data_ram_) ar(word);
 }
 
-} // namespace snes::coprocessor
+} // namespace bitforge::coprocessor

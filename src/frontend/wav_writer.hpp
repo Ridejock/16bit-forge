@@ -5,7 +5,7 @@
 #include <span>
 #include <string>
 
-namespace snes::frontend {
+namespace bitforge::frontend {
 
 // Streams 16-bit stereo PCM to a .wav file. The RIFF sizes are patched on every flush and on
 // close, so a recording cut short by a crash or a debugger stop still opens in an audio editor.
@@ -36,4 +36,4 @@ private:
     uint64_t frames_ = 0;
 };
 
-} // namespace snes::frontend
+} // namespace bitforge::frontend

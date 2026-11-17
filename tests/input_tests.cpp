@@ -11,7 +11,7 @@
 #include <filesystem>
 #include <string>
 
-using namespace snes::frontend;
+using namespace bitforge::frontend;
 
 namespace {
 
@@ -280,7 +280,7 @@ auto test_hotkeys() -> bool {
 
 // Pads to console ports, four virtual pads on a multitap, the host mouse, and the scope's aim.
 auto test_controller_devices() -> bool {
-    using snes::Device;
+    using bitforge::Device;
     auto slots = pad_slots(kDefaultPortDevices);
     CHECK(slots[0].port == 0 && slots[1].port == 1 && slots[2].port < 0);
     slots = pad_slots({Device::Gamepad, Device::Multitap});
@@ -364,14 +364,14 @@ auto test_settings_round_trip() -> void {
     out.ports[0].deadzone = 40;
     out.ports[1].device = std::string(kNoDevice);
     out.ports[1].stick_as_dpad = false;
-    out.log.level[1] = snes::utils::LogLevel::Trace;
+    out.log.level[1] = bitforge::utils::LogLevel::Trace;
     out.log.file[1] = true;
-    out.log.channel[static_cast<size_t>(snes::utils::LogChannel::Ppu)] = false;
+    out.log.channel[static_cast<size_t>(bitforge::utils::LogChannel::Ppu)] = false;
     out.hotkeys.keys[0] = SDLK_R;
     out.hotkeys.pad[0] = SDL_GAMEPAD_BUTTON_LEFT_SHOULDER;
     out.hotkeys.pad[2] = kPadNone;
     out.speed = {false, 256, 10, true, 0};
-    out.port_devices = {snes::Device::Mouse, snes::Device::SuperScope};
+    out.port_devices = {bitforge::Device::Mouse, bitforge::Device::SuperScope};
     out.pointer.mouse_speed = 150;
     out.pointer.crosshair = false;
     out.ports[4].device = std::string(kNoDevice);
@@ -387,10 +387,10 @@ auto test_settings_round_trip() -> void {
     CHECK(in.ports[0].deadzone == 40 && in.ports[0].stick_as_dpad);
     CHECK(in.ports[1].device == kNoDevice && !in.ports[1].stick_as_dpad);
     CHECK(in.ports[1].buttons == default_button_map());
-    CHECK(in.log.level[1] == snes::utils::LogLevel::Trace && in.log.level[0] == snes::utils::LogLevel::Info);
+    CHECK(in.log.level[1] == bitforge::utils::LogLevel::Trace && in.log.level[0] == bitforge::utils::LogLevel::Info);
     CHECK(in.log.file[1] && in.log.file[0]);
-    CHECK(!in.log.channel[static_cast<size_t>(snes::utils::LogChannel::Ppu)]);
-    CHECK(in.log.channel[static_cast<size_t>(snes::utils::LogChannel::Cpu)]);
+    CHECK(!in.log.channel[static_cast<size_t>(bitforge::utils::LogChannel::Ppu)]);
+    CHECK(in.log.channel[static_cast<size_t>(bitforge::utils::LogChannel::Cpu)]);
     CHECK(in.keys == default_key_map());
     CHECK(in.hotkeys.keys == out.hotkeys.keys && in.hotkeys.pad == out.hotkeys.pad);
     CHECK(in.hotkeys.keys[1] == SDLK_TAB && in.hotkeys.pad[1] == kPadTriggerRight);
@@ -403,7 +403,7 @@ auto test_settings_round_trip() -> void {
 } // namespace
 
 int main() {
-    snes::utils::Logger::set_level(snes::utils::LogLevel::Error);
+    bitforge::utils::Logger::set_level(bitforge::utils::LogLevel::Error);
     SDL_Init(0);
     std::printf("=== Input tests ===\n\n");
     int passed = 0;

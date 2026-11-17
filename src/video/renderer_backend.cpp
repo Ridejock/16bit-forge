@@ -5,7 +5,7 @@
 #include <cstddef>
 #include <vector>
 
-namespace snes::video {
+namespace bitforge::video {
 
 auto RendererBackend::create(SDL_Window* window) -> bool {
     destroy();
@@ -88,4 +88,4 @@ auto RendererBackend::set_filter(const FilterPreset& preset) -> bool {
     return true;
 }
 
-} // namespace snes::video
+} // namespace bitforge::video

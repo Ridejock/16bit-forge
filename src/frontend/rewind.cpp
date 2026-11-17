@@ -3,7 +3,7 @@
 
 #include <algorithm>
 
-namespace snes::frontend {
+namespace bitforge::frontend {
 
 namespace {
 
@@ -132,4 +132,4 @@ auto RewindBuffer::trim() -> void {
     }
 }
 
-} // namespace snes::frontend
+} // namespace bitforge::frontend

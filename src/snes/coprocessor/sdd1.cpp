@@ -3,7 +3,7 @@
 
 #include "utils/logging.hpp"
 
-namespace snes::coprocessor {
+namespace bitforge::coprocessor {
 
 // Tables from fullsnes ("SNES Cart S-DD1 Decompression Algorithm").
 const std::array<Byte, 33> SDD1Decompressor::kCodeSize = {
@@ -312,4 +312,4 @@ auto SDD1::serialize(Archive& ar) -> void {
   decompressor_.serialize(ar);
 }
 
-} // namespace snes::coprocessor
+} // namespace bitforge::coprocessor

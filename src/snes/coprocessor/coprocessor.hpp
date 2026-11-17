@@ -16,7 +16,7 @@
 #include <string>
 #include <vector>
 
-namespace snes::coprocessor {
+namespace bitforge::coprocessor {
 
 enum class Chip : uint8_t {
   None,
@@ -75,4 +75,4 @@ public:
   virtual auto serialize(Archive& ar) -> void = 0;
 };
 
-} // namespace snes::coprocessor
+} // namespace bitforge::coprocessor

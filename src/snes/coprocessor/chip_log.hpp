@@ -7,7 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace snes::coprocessor {
+namespace bitforge::coprocessor {
 
 template <std::size_t N>
 class LogLimiter {
@@ -26,4 +26,4 @@ private:
   std::array<uint16_t, N> counts_{};
 };
 
-} // namespace snes::coprocessor
+} // namespace bitforge::coprocessor

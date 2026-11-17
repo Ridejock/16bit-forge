@@ -6,7 +6,7 @@
 #include <cstring>
 #include <algorithm>
 
-namespace snes::ppu {
+namespace bitforge::ppu {
 
 namespace {
 
@@ -485,9 +485,9 @@ void PPU::dump_vram() {
     for (int i = 0; i < 64; i += 16) log_row(0x4000 + i);
 }
 
-} // namespace snes::ppu
+} // namespace bitforge::ppu
 
-namespace snes::ppu {
+namespace bitforge::ppu {
 
 auto PPU::serialize(Archive& ar) -> void {
     ar(field_, frame_interlace_, frame_overscan_, frame_had_hires_, last_frame_hires_, line_clock, current_scanline, line_x,
@@ -514,4 +514,4 @@ auto PPU::serialize(Archive& ar) -> void {
     ar.bytes(framebuffer.data(), static_cast<size_t>(w) * static_cast<size_t>(h) * sizeof(uint32_t));
 }
 
-} // namespace snes::ppu
+} // namespace bitforge::ppu

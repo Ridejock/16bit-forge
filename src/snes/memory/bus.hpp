@@ -11,12 +11,12 @@
 #include "snes/memory/cartridge.hpp"
 #include "snes/serialize.hpp"
 
-namespace snes::ppu { class PPU; }
-namespace snes::apu { class APU; }
-namespace snes::cpu { class CPU65c816; }
-namespace snes { class Msu1; class CheatEngine; struct Cheat; }
+namespace bitforge::ppu { class PPU; }
+namespace bitforge::apu { class APU; }
+namespace bitforge::cpu { class CPU65c816; }
+namespace bitforge { class Msu1; class CheatEngine; struct Cheat; }
 
-namespace snes::memory {
+namespace bitforge::memory {
 
 class WRAM;
 
@@ -222,4 +222,4 @@ private:
   auto dma_transfer_unit(DMAChannel& ch, Address a_addr, int index) -> void;
 };
 
-} // namespace snes::memory
+} // namespace bitforge::memory

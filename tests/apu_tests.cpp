@@ -2,7 +2,7 @@
 // APU tests: SPC700 opcodes and flags (MUL/DIV/DAA/DAS, the P flag, calls, bit ops, cycles),
 // the S-SMP memory map, ports, IPL upload and timers, master-clock sync, and the S-DSP (BRR
 // decoding, Gaussian interpolation, envelopes, counters, KON/KOFF/ENDX, echo, noise, mute).
-// Then every *.spc in SNES_TEST_ROMS_DIR (optional), plus any SPC test programs given on the
+// Then every *.spc in BITFORGE_TEST_ROMS_DIR (optional), plus any SPC test programs given on the
 // command line, is run to completion: the PeterLemon SPC700 tests post 1, 2, 3... on port 0 per passing
 // check and $80 | n on a failure.
 #include "snes/apu/apu.hpp"
@@ -25,11 +25,11 @@
 #include <string>
 #include <vector>
 
-using snes::Byte;
-using snes::Word;
-using snes::apu::APU;
-using snes::apu::DSP;
-using snes::apu::SPC700;
+using bitforge::Byte;
+using bitforge::Word;
+using bitforge::apu::APU;
+using bitforge::apu::DSP;
+using bitforge::apu::SPC700;
 
 namespace {
 
@@ -75,7 +75,7 @@ struct Cpu {
     auto regs(Byte a, Byte x, Byte y, Byte psw) -> void {
         cpu.set_registers({a, x, y, 0xEF, psw, kOrg});
     }
-    auto r() const -> snes::apu::SmpRegisters { return cpu.registers(); }
+    auto r() const -> bitforge::apu::SmpRegisters { return cpu.registers(); }
 };
 
 // Vectors from gilyon/snes-tests spctest (tests.txt): opcode, A, X, Y, P in -> A, Y, P out.
@@ -413,7 +413,7 @@ auto test_ipl_and_control() -> void {
 
 auto test_ports_and_mirrors() -> void {
     APU apu;
-    snes::memory::Bus bus;
+    bitforge::memory::Bus bus;
     bus.connect_apu(&apu);
     bus.load_test_rom(std::vector<Byte>(0x8000, 0xEA));
     bus.reset();
@@ -592,7 +592,7 @@ auto test_port_read_timing() -> void {
 // The same through the bus: $2140 reads inside a CPU instruction use the bus's clock.
 auto test_port_timing_bus() -> void {
     APU apu;
-    snes::memory::Bus bus;
+    bitforge::memory::Bus bus;
     bus.connect_apu(&apu);
     bus.load_test_rom(std::vector<Byte>(0x8000, 0xEA));
     bus.reset();
@@ -655,11 +655,11 @@ auto test_brr_decode() -> void {
 }
 
 auto test_gaussian() -> void {
-    check_eq(snes::apu::kGaussTable[0], 0, "table start");
-    check_eq(snes::apu::kGaussTable[511], 1305, "table peak");
+    check_eq(bitforge::apu::kGaussTable[0], 0, "table start");
+    check_eq(bitforge::apu::kGaussTable[511], 1305, "table peak");
     for (int phase = 0; phase < 256; phase++) {
-        const int sum = snes::apu::kGaussTable[static_cast<size_t>(255 - phase)] + snes::apu::kGaussTable[static_cast<size_t>(511 - phase)] +
-                        snes::apu::kGaussTable[static_cast<size_t>(256 + phase)] + snes::apu::kGaussTable[static_cast<size_t>(phase)];
+        const int sum = bitforge::apu::kGaussTable[static_cast<size_t>(255 - phase)] + bitforge::apu::kGaussTable[static_cast<size_t>(511 - phase)] +
+                        bitforge::apu::kGaussTable[static_cast<size_t>(256 + phase)] + bitforge::apu::kGaussTable[static_cast<size_t>(phase)];
         if (sum < 2047 || sum > 2049) check(false, "kernel weights sum to ~2048 at every phase");
     }
     check_eq(DSP::gaussian(0, 0, 10000, 0, 0), 6372, "impulse at phase 0");
@@ -673,11 +673,11 @@ auto test_gaussian() -> void {
 auto test_counter_rates() -> void {
     for (int rate = 1; rate < 32; rate++) {
         int fires = 0;
-        for (int c = 0; c < snes::apu::kCounterRange; c++) fires += DSP::counter_fires(static_cast<uint16_t>(c), rate) ? 1 : 0;
-        if (fires != snes::apu::kCounterRange / snes::apu::kCounterRate[static_cast<size_t>(rate)]) check(false, "rate fires range/rate times per cycle");
+        for (int c = 0; c < bitforge::apu::kCounterRange; c++) fires += DSP::counter_fires(static_cast<uint16_t>(c), rate) ? 1 : 0;
+        if (fires != bitforge::apu::kCounterRange / bitforge::apu::kCounterRate[static_cast<size_t>(rate)]) check(false, "rate fires range/rate times per cycle");
     }
     int never = 0;
-    for (int c = 0; c < snes::apu::kCounterRange; c++) never += DSP::counter_fires(static_cast<uint16_t>(c), 0) ? 1 : 0;
+    for (int c = 0; c < bitforge::apu::kCounterRange; c++) never += DSP::counter_fires(static_cast<uint16_t>(c), 0) ? 1 : 0;
     check_eq(never, 0, "rate 0 never fires");
 }
 
@@ -944,7 +944,7 @@ auto run_port_test(const std::string& path) -> std::optional<PortResult> {
 } // namespace
 
 int main(int argc, char** argv) {
-    snes::utils::Logger::set_level(snes::utils::LogLevel::Error);
+    bitforge::utils::Logger::set_level(bitforge::utils::LogLevel::Error);
     struct Test { const char* name; void (*fn)(); };
     const Test tests[] = {
         {"MUL/DIV/DAA/DAS (spctest vectors)", test_mul_div_daa_das},
@@ -983,7 +983,7 @@ int main(int argc, char** argv) {
         if (failures_in_test == 0) { printf("PASS\n"); passed++; } else { failed++; }
     }
 
-    // SPC test programs: *.spc in SNES_TEST_ROMS_DIR (optional) plus anything on the command line.
+    // SPC test programs: *.spc in BITFORGE_TEST_ROMS_DIR (optional) plus anything on the command line.
     std::vector<std::string> programs;
     std::error_code ec;
     if (const std::string dir = test_rom::test_roms_dir(); !dir.empty()) {

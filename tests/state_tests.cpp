@@ -3,7 +3,7 @@
 //
 //   state_tests [extra.sfc ...]
 //
-// Determinism: for the built-in test ROMs (tests/test_rom.hpp), every ROM in SNES_TEST_ROMS_DIR
+// Determinism: for the built-in test ROMs (tests/test_rom.hpp), every ROM in BITFORGE_TEST_ROMS_DIR
 // and any given on the command line, run a while with
 // scripted input on both pads, save a state, run N frames hashing the picture and the audio,
 // load the state, run the same N frames again: both hashes must match, and saving again right
@@ -61,7 +61,7 @@ struct RunResult {
     size_t nonzero_audio = 0;
 };
 
-auto run(snes::System& sys, int first_frame, int frames) -> RunResult {
+auto run(bitforge::System& sys, int first_frame, int frames) -> RunResult {
     Hash video;
     Hash audio;
     RunResult r;
@@ -87,7 +87,7 @@ auto test_archive() -> void {
     struct Inner {
         int16_t a = -2;
         bool b = true;
-        auto serialize(snes::Archive& ar) -> void { ar(a, b); }
+        auto serialize(bitforge::Archive& ar) -> void { ar(a, b); }
     };
     enum class Color : uint8_t { Red, Green };
     uint32_t u = 0xDEADBEEF;
@@ -98,7 +98,7 @@ auto test_archive() -> void {
     Color color = Color::Green;
     uint64_t big = 0x0123456789ABCDEFull;
 
-    snes::Archive out = snes::Archive::saver();
+    bitforge::Archive out = bitforge::Archive::saver();
     out(u, c_array, bytes, inner, color, big);
     CHECK(out.data().size() == 4 + 3 + 4 + 2 * 3 + 1 + 8);
 
@@ -108,26 +108,26 @@ auto test_archive() -> void {
     std::array<Inner, 2> inner2{};
     Color color2 = Color::Red;
     uint64_t big2 = 0;
-    snes::Archive in = snes::Archive::loader(out.data());
+    bitforge::Archive in = bitforge::Archive::loader(out.data());
     in(u2, c2, bytes2, inner2, color2, big2);
     CHECK(in.ok() && in.remaining() == 0);
     CHECK(u2 == u && c2[1] == -2 && bytes2 == bytes && inner2[1].a == 1234 && inner2[0].b && color2 == Color::Green && big2 == big);
 
     // Reading past the end fails and doesn't touch the value.
     std::vector<uint8_t> short_data(out.data().begin(), out.data().begin() + 2);
-    snes::Archive truncated = snes::Archive::loader(short_data);
+    bitforge::Archive truncated = bitforge::Archive::loader(short_data);
     uint32_t untouched = 7;
     truncated(untouched);
     CHECK(!truncated.ok() && untouched == 7);
 
     const char* digits = "123456789";
-    CHECK(snes::crc32({reinterpret_cast<const uint8_t*>(digits), 9}) == 0xCBF43926u);
+    CHECK(bitforge::crc32({reinterpret_cast<const uint8_t*>(digits), 9}) == 0xCBF43926u);
 }
 
 // $4016/$4017 serial reads and the auto-joypad registers, on the bus alone.
 auto test_joypad_ports() -> void {
-    snes::memory::Bus bus;
-    bus.load_test_rom(std::vector<snes::Byte>(0x8000, 0xEA));
+    bitforge::memory::Bus bus;
+    bus.load_test_rom(std::vector<bitforge::Byte>(0x8000, 0xEA));
     bus.reset();
     const uint16_t pad1 = 0x8000 | 0x0800 | 0x0080;  // B, Up, A
     const uint16_t pad2 = 0x4000 | 0x0100 | 0x0010;  // Y, Right, R
@@ -182,25 +182,25 @@ auto test_joypad_ports() -> void {
 
 // SRAM writes set the dirty flag; save states carry SRAM and refuse a size mismatch.
 auto test_sram_dirty_and_state() -> void {
-    snes::memory::Cartridge cart;
-    cart.load_raw(std::vector<snes::Byte>(0x8000, 0), snes::memory::MapMode::LoROM, 0x2000);
+    bitforge::memory::Cartridge cart;
+    cart.load_raw(std::vector<bitforge::Byte>(0x8000, 0), bitforge::memory::MapMode::LoROM, 0x2000);
     CHECK(!cart.sram_dirty());
     cart.write(0x700010, 0x00);  // same value: not dirty
     CHECK(!cart.sram_dirty());
     cart.write(0x700010, 0x5A);
     CHECK(cart.sram_dirty() && cart.sram_data()[0x10] == 0x5A);
 
-    snes::Archive out = snes::Archive::saver();
+    bitforge::Archive out = bitforge::Archive::saver();
     cart.serialize(out);
-    snes::memory::Cartridge other;
-    other.load_raw(std::vector<snes::Byte>(0x8000, 0), snes::memory::MapMode::LoROM, 0x800);
-    snes::Archive in = snes::Archive::loader(out.data());
+    bitforge::memory::Cartridge other;
+    other.load_raw(std::vector<bitforge::Byte>(0x8000, 0), bitforge::memory::MapMode::LoROM, 0x800);
+    bitforge::Archive in = bitforge::Archive::loader(out.data());
     other.serialize(in);
     CHECK(!in.ok());
 }
 
 // Power on with the ROM (as the frontend does: load, then reset to fetch the vectors).
-auto boot(snes::System& sys, const std::string& path) -> bool {
+auto boot(bitforge::System& sys, const std::string& path) -> bool {
     if (!sys.load_rom(path)) return false;
     sys.reset();
     return true;
@@ -208,18 +208,18 @@ auto boot(snes::System& sys, const std::string& path) -> bool {
 
 // Save, run, load, run: same picture and sound. Returns false if the ROM can't be loaded.
 auto test_determinism(const std::string& path) -> bool {
-    snes::System sys;
+    bitforge::System sys;
     if (!boot(sys, path)) return false;
     run(sys, 0, kWarmupFrames);
     const auto& fb_pixels = sys.get_framebuffer();
     const auto [w, h] = sys.get_framebuffer_size();
-    const std::vector<uint8_t> file = snes::savestate::encode(sys, kWarmupFrames, 0, fb_pixels, w, h);
+    const std::vector<uint8_t> file = bitforge::savestate::encode(sys, kWarmupFrames, 0, fb_pixels, w, h);
 
     const RunResult first = run(sys, kWarmupFrames, kRunFrames);
-    snes::savestate::Info info;
-    CHECK(snes::savestate::decode(sys, file, info) == snes::savestate::Result::Ok);
+    bitforge::savestate::Info info;
+    CHECK(bitforge::savestate::decode(sys, file, info) == bitforge::savestate::Result::Ok);
     CHECK(info.frame == kWarmupFrames && info.rom_crc == sys.rom_crc32() && info.thumb_w > 0);
-    const std::vector<uint8_t> resaved = snes::savestate::encode(sys, kWarmupFrames, 0, fb_pixels, w, h);
+    const std::vector<uint8_t> resaved = bitforge::savestate::encode(sys, kWarmupFrames, 0, fb_pixels, w, h);
     CHECK(resaved == file);
     const RunResult second = run(sys, kWarmupFrames, kRunFrames);
     CHECK(first.video == second.video);
@@ -232,8 +232,8 @@ auto test_determinism(const std::string& path) -> bool {
 
 // A state from another ROM, another version or a cut-off file is refused and changes nothing.
 auto test_rejects(const std::string& rom_a, const std::string& rom_b) -> void {
-    snes::System a;
-    snes::System b;
+    bitforge::System a;
+    bitforge::System b;
     if (!boot(a, rom_a) || !boot(b, rom_b)) {
         CHECK(false);
         return;
@@ -241,26 +241,26 @@ auto test_rejects(const std::string& rom_a, const std::string& rom_b) -> void {
     run(a, 0, 30);
     run(b, 0, 30);
     const auto [w, h] = a.get_framebuffer_size();
-    std::vector<uint8_t> file = snes::savestate::encode(a, 30, 1700000000, a.get_framebuffer(), w, h);
+    std::vector<uint8_t> file = bitforge::savestate::encode(a, 30, 1700000000, a.get_framebuffer(), w, h);
     const std::vector<uint8_t> before = b.save_state();
-    snes::savestate::Info info;
+    bitforge::savestate::Info info;
 
-    CHECK(snes::savestate::decode(b, file, info) == snes::savestate::Result::WrongRom);
+    CHECK(bitforge::savestate::decode(b, file, info) == bitforge::savestate::Result::WrongRom);
     CHECK(b.save_state() == before);
 
     std::vector<uint8_t> bumped = file;
     bumped[8] = static_cast<uint8_t>(bumped[8] + 1);  // version field
-    CHECK(snes::savestate::decode(a, bumped, info) == snes::savestate::Result::WrongVersion);
+    CHECK(bitforge::savestate::decode(a, bumped, info) == bitforge::savestate::Result::WrongVersion);
 
     std::vector<uint8_t> cut(file.begin(), file.end() - 100);
     const std::vector<uint8_t> a_before = a.save_state();
-    CHECK(snes::savestate::decode(a, cut, info) == snes::savestate::Result::Corrupt);
+    CHECK(bitforge::savestate::decode(a, cut, info) == bitforge::savestate::Result::Corrupt);
     CHECK(a.save_state() == a_before);
 
     const std::vector<uint8_t> junk(64, 0x42);
-    CHECK(snes::savestate::decode(a, junk, info) == snes::savestate::Result::NotAState);
+    CHECK(bitforge::savestate::decode(a, junk, info) == bitforge::savestate::Result::NotAState);
 
-    CHECK(snes::savestate::read_info(file, info) == snes::savestate::Result::Ok);
+    CHECK(bitforge::savestate::read_info(file, info) == bitforge::savestate::Result::Ok);
     CHECK(info.timestamp == 1700000000 && info.frame == 30 && info.thumb_w == w / 2 && info.thumb_h == h / 2);
     CHECK(info.thumbnail.size() == static_cast<size_t>(info.thumb_w * info.thumb_h));
 }
@@ -305,18 +305,18 @@ auto test_battery_saves() -> void {
     const std::string srm = (dir / "saves" / "Counter.srm").string();
 
     {
-        snes::frontend::Emulator emu;
+        bitforge::frontend::Emulator emu;
         emu.set_data_dir(dir.string());
         CHECK(emu.load(rom));
         CHECK(emu.sram_path() == srm);
         for (int i = 0; i < 10; i++) emu.run_frame();
         CHECK(!fs::exists(srm));  // not yet: flushed every kSramFlushFrames
-        for (uint64_t i = 10; i < snes::frontend::Emulator::kSramFlushFrames; i++) emu.run_frame();
+        for (uint64_t i = 10; i < bitforge::frontend::Emulator::kSramFlushFrames; i++) emu.run_frame();
         const auto file = read_file(srm);
         CHECK(file.size() == 2048 && file[0] == 1);
     }
     {
-        snes::frontend::Emulator emu;  // second boot: the counter continues from the file
+        bitforge::frontend::Emulator emu;  // second boot: the counter continues from the file
         emu.set_data_dir(dir.string());
         CHECK(emu.load(rom));
         for (int i = 0; i < 5; i++) emu.run_frame();
@@ -370,7 +370,7 @@ auto test_rtc_file() -> void {
     for (int i = 0; i < 8; i++) file.push_back(static_cast<uint8_t>(static_cast<uint64_t>(now - 3) >> (8 * i)));
     std::ofstream(rtc, std::ios::binary).write(reinterpret_cast<const char*>(file.data()), static_cast<std::streamsize>(file.size()));
     {
-        snes::frontend::Emulator emu;
+        bitforge::frontend::Emulator emu;
         emu.set_data_dir(dir.string());
         CHECK(emu.load(path));
         CHECK(emu.rtc_path() == rtc);
@@ -388,7 +388,7 @@ auto test_rtc_file() -> void {
         CHECK(static_cast<int64_t>(stamp) >= now && static_cast<int64_t>(stamp) <= now + 60);
     }
     {  // a cartridge without a clock writes no .rtc
-        snes::frontend::Emulator emu;
+        bitforge::frontend::Emulator emu;
         emu.set_data_dir(dir.string());
         const std::string plain = (dir / "Counter.sfc").string();
         write_counter_rom(plain);
@@ -404,7 +404,7 @@ auto test_rtc_file() -> void {
 // version range that keeps older files loading.
 auto test_thumbnails() -> void {
     namespace fs = std::filesystem;
-    using snes::savestate::Info;
+    using bitforge::savestate::Info;
     auto frame = [](int w, int h) {
         std::vector<uint32_t> px(static_cast<size_t>(w) * static_cast<size_t>(h));
         for (int y = 0; y < h; y++) {
@@ -419,7 +419,7 @@ auto test_thumbnails() -> void {
                          Size{256, 478, 128, 119}}) {
         const auto px = frame(s.w, s.h);
         Info info;
-        snes::savestate::make_thumbnail(px.data(), s.w, s.h, info);
+        bitforge::savestate::make_thumbnail(px.data(), s.w, s.h, info);
         CHECK(info.thumb_w == s.tw && info.thumb_h == s.th && info.thumbnail.size() == static_cast<size_t>(s.tw * s.th));
         const int sx = s.w / s.tw, sy = s.h / s.th;
         bool exact = true;
@@ -446,74 +446,74 @@ auto test_thumbnails() -> void {
     fs::create_directories(dir);
     const std::string rom = (dir / "Counter.sfc").string();
     write_counter_rom(rom);
-    snes::System sys;
+    bitforge::System sys;
     CHECK(boot(sys, rom));
     sys.run_frame();
     const auto px = frame(256, 224);
-    const auto file = snes::savestate::encode(sys, 1234, 1'700'000'000, px.data(), 256, 224);
+    const auto file = bitforge::savestate::encode(sys, 1234, 1'700'000'000, px.data(), 256, 224);
     Info made;
-    snes::savestate::make_thumbnail(px.data(), 256, 224, made);
+    bitforge::savestate::make_thumbnail(px.data(), 256, 224, made);
     Info read;
-    CHECK(snes::savestate::read_info(file, read) == snes::savestate::Result::Ok);
-    CHECK(read.version == snes::savestate::kVersion && read.frame == 1234 && read.timestamp == 1'700'000'000);
+    CHECK(bitforge::savestate::read_info(file, read) == bitforge::savestate::Result::Ok);
+    CHECK(read.version == bitforge::savestate::kVersion && read.frame == 1234 && read.timestamp == 1'700'000'000);
     CHECK(read.thumb_w == 128 && read.thumb_h == 112 && read.thumbnail == made.thumbnail);
-    CHECK(snes::savestate::decode(sys, file, read) == snes::savestate::Result::Ok);
+    CHECK(bitforge::savestate::decode(sys, file, read) == bitforge::savestate::Result::Ok);
 
     // Versions: kMinVersion..kVersion load; older and newer are refused (version at offset 8).
-    for (const uint32_t v : {snes::savestate::kMinVersion - 1, snes::savestate::kVersion + 1}) {
+    for (const uint32_t v : {bitforge::savestate::kMinVersion - 1, bitforge::savestate::kVersion + 1}) {
         auto other = file;
         std::memcpy(&other[8], &v, 4);
-        CHECK(snes::savestate::read_info(other, read) == snes::savestate::Result::WrongVersion);
-        CHECK(snes::savestate::decode(sys, other, read) == snes::savestate::Result::WrongVersion);
+        CHECK(bitforge::savestate::read_info(other, read) == bitforge::savestate::Result::WrongVersion);
+        CHECK(bitforge::savestate::decode(sys, other, read) == bitforge::savestate::Result::WrongVersion);
     }
     // Every accepted version loads a file written in its own layout (older ones by encode's
     // version argument), with the controller ports intact.
     sys.set_port_connected(1, true);
     sys.set_pad(1, 0, 0x8421);
-    for (uint32_t v = snes::savestate::kMinVersion; v <= snes::savestate::kVersion; v++) {
-        const auto older = snes::savestate::encode(sys, 1234, 1'700'000'000, px.data(), 256, 224, v);
-        CHECK(snes::savestate::read_info(older, read) == snes::savestate::Result::Ok && read.version == v);
-        snes::System fresh;
+    for (uint32_t v = bitforge::savestate::kMinVersion; v <= bitforge::savestate::kVersion; v++) {
+        const auto older = bitforge::savestate::encode(sys, 1234, 1'700'000'000, px.data(), 256, 224, v);
+        CHECK(bitforge::savestate::read_info(older, read) == bitforge::savestate::Result::Ok && read.version == v);
+        bitforge::System fresh;
         CHECK(boot(fresh, rom));
-        CHECK(snes::savestate::decode(fresh, older, read) == snes::savestate::Result::Ok);
-        CHECK(fresh.controller(1).device() == snes::Device::Gamepad && fresh.controller(1).pad(0) == 0x8421);
+        CHECK(bitforge::savestate::decode(fresh, older, read) == bitforge::savestate::Result::Ok);
+        CHECK(fresh.controller(1).device() == bitforge::Device::Gamepad && fresh.controller(1).pad(0) == 0x8421);
         CHECK(fresh.save_state() == sys.save_state());
     }
     // A multitap needs the current format; the older one keeps what it can (a gamepad).
-    sys.set_port_device(1, snes::Device::Multitap);
+    sys.set_port_device(1, bitforge::Device::Multitap);
     sys.set_pad(1, 3, 0x0F00);
     {
-        snes::System fresh;
+        bitforge::System fresh;
         CHECK(boot(fresh, rom));
-        CHECK(snes::savestate::decode(fresh, snes::savestate::encode(sys, 1, 1, nullptr, 0, 0), read) == snes::savestate::Result::Ok);
-        CHECK(fresh.controller(1).device() == snes::Device::Multitap && fresh.controller(1).pad(3) == 0x0F00);
-        CHECK(snes::savestate::decode(fresh, snes::savestate::encode(sys, 1, 1, nullptr, 0, 0, 4), read) == snes::savestate::Result::Ok);
-        CHECK(fresh.controller(1).device() == snes::Device::Gamepad);
+        CHECK(bitforge::savestate::decode(fresh, bitforge::savestate::encode(sys, 1, 1, nullptr, 0, 0), read) == bitforge::savestate::Result::Ok);
+        CHECK(fresh.controller(1).device() == bitforge::Device::Multitap && fresh.controller(1).pad(3) == 0x0F00);
+        CHECK(bitforge::savestate::decode(fresh, bitforge::savestate::encode(sys, 1, 1, nullptr, 0, 0, 4), read) == bitforge::savestate::Result::Ok);
+        CHECK(fresh.controller(1).device() == bitforge::Device::Gamepad);
     }
     // How a component keeps older files loading: a field added in version 5 is skipped for 4.
     struct Grown {
         uint8_t a = 0, b = 0;
-        auto serialize(snes::Archive& ar) -> void {
+        auto serialize(bitforge::Archive& ar) -> void {
             ar(a);
             if (ar.at_least(5)) ar(b);
         }
     };
     Grown saved{7, 9};
-    snes::Archive out = snes::Archive::saver();
+    bitforge::Archive out = bitforge::Archive::saver();
     out(saved);
     CHECK(out.data().size() == 2);
     const std::vector<uint8_t> v4_data = {7};
     Grown from4{0, 42};
-    snes::Archive in4 = snes::Archive::loader(v4_data, 4);
+    bitforge::Archive in4 = bitforge::Archive::loader(v4_data, 4);
     in4(from4);
     CHECK(in4.ok() && in4.remaining() == 0 && from4.a == 7 && from4.b == 42);
     Grown from5;
-    snes::Archive in5 = snes::Archive::loader(out.data(), 5);
+    bitforge::Archive in5 = bitforge::Archive::loader(out.data(), 5);
     in5(from5);
     CHECK(in5.ok() && in5.remaining() == 0 && from5.a == 7 && from5.b == 9);
 
     // What the slot menu reads after a real save.
-    snes::frontend::Emulator emu;
+    bitforge::frontend::Emulator emu;
     emu.set_data_dir(dir.string());
     CHECK(emu.load(rom));
     for (int i = 0; i < 30; i++) emu.run_frame();
@@ -523,7 +523,7 @@ auto test_thumbnails() -> void {
     CHECK(slot.has_value());
     if (slot) {
         CHECK(slot->timestamp >= before && slot->timestamp <= before + 5);
-        CHECK(slot->frame == 30 && slot->version == snes::savestate::kVersion);
+        CHECK(slot->frame == 30 && slot->version == bitforge::savestate::kVersion);
         CHECK(slot->thumb_w == emu.width() / 2 && slot->thumb_h == emu.height() / 2);
         CHECK(slot->thumbnail.size() == static_cast<size_t>(slot->thumb_w * slot->thumb_h));
     }
@@ -531,7 +531,7 @@ auto test_thumbnails() -> void {
     CHECK(emu.load_state(3).empty());
     emu.unload();
 
-    using E = snes::frontend::Emulator;
+    using E = bitforge::frontend::Emulator;
     CHECK(E::age_text(1000, 1030) == "just now" && E::age_text(1000, 1000 + 125) == "2 min ago");
     CHECK(E::age_text(0, 3 * 3600 + 5) == "3 h ago" && E::age_text(0, 86400 + 5) == "yesterday");
     CHECK(E::age_text(0, 5 * 86400) == "5 days ago" && E::age_text(10, 5) == "in the future");
@@ -551,7 +551,7 @@ auto test_cheats_file() -> void {
     {
         std::ofstream(dir / "cheats" / "Counter.cht") << "# test\non 7E0040AB  Fill\noff 7E0041CD\n";
     }
-    snes::frontend::Emulator emu;
+    bitforge::frontend::Emulator emu;
     emu.set_data_dir(dir.string());
     CHECK(emu.load(rom));
     CHECK(emu.cheats().size() == 2 && emu.cheats()[0].enabled && !emu.cheats()[1].enabled);
@@ -561,11 +561,11 @@ auto test_cheats_file() -> void {
     list.push_back({false, "DF47-E76D", "GG"});
     CHECK(emu.set_cheats(list));
     const auto text = read_file((dir / "cheats" / "Counter.cht").string());
-    const auto parsed = snes::parse_cheat_file(std::string_view(reinterpret_cast<const char*>(text.data()), text.size()));
+    const auto parsed = bitforge::parse_cheat_file(std::string_view(reinterpret_cast<const char*>(text.data()), text.size()));
     CHECK(parsed == list);
     emu.unload();
     // A game without a file and no cheats writes nothing.
-    snes::frontend::Emulator other;
+    bitforge::frontend::Emulator other;
     other.set_data_dir((dir / "empty").string());
     CHECK(other.load(rom));
     CHECK(other.cheats().empty() && other.set_cheats({}));
@@ -577,7 +577,7 @@ auto test_cheats_file() -> void {
 // The delta coder and the history ring: exact round trips, size changes, the oldest entry held,
 // the budget trimming the oldest entries, the fast-forward audio squeeze.
 auto test_rewind_buffer() -> void {
-    using namespace snes::frontend;
+    using namespace bitforge::frontend;
     std::vector<uint8_t> a(5000), b;
     for (size_t i = 0; i < a.size(); i++) a[i] = static_cast<uint8_t>(i * 7);
     b = a;
@@ -635,7 +635,7 @@ auto test_rewind_buffer() -> void {
 // through the history, and from each restored point the same input replays the same frames
 // (picture and sound) bit for bit.
 auto test_rewind_determinism(const std::string& rom) -> bool {
-    using namespace snes::frontend;
+    using namespace bitforge::frontend;
     namespace fs = std::filesystem;
     const fs::path dir = fs::temp_directory_path() / "snes_state_tests_rewind";
     fs::remove_all(dir);
@@ -693,7 +693,7 @@ auto test_rewind_determinism(const std::string& rom) -> bool {
 } // namespace
 
 int main(int argc, char** argv) {
-    snes::utils::Logger::set_level(snes::utils::LogLevel::Error);
+    bitforge::utils::Logger::set_level(bitforge::utils::LogLevel::Error);
     std::printf("=== Save state / input port tests ===\n\n");
     int passed = 0;
     int failed = 0;
@@ -721,7 +721,7 @@ int main(int argc, char** argv) {
     const std::string built_rom = test_rom::write_test_rom(0);
     run_test("Rewind determinism (built-in test ROM)", [&] { return test_rewind_determinism(built_rom); });
 
-    // The built-in test ROMs, then any in SNES_TEST_ROMS_DIR, then the command line.
+    // The built-in test ROMs, then any in BITFORGE_TEST_ROMS_DIR, then the command line.
     std::vector<std::string> roms = {built_rom, test_rom::write_test_rom(1)};
     std::vector<std::string> extra;
     std::error_code ec;

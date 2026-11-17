@@ -25,7 +25,7 @@
 #include <cstdint>
 #include <numbers>
 
-namespace snes::coprocessor {
+namespace bitforge::coprocessor {
 
 inline constexpr char kCx4DataRomSha256[] =
     "ae8d4d1961b93421ff00b3caa1d0f0ce7783e749772a3369c36b3dbf0d37ef18";
@@ -101,4 +101,4 @@ inline auto generate_cx4_data_rom() -> std::array<Byte, kCx4DataRomSize> {
   return out;
 }
 
-}  // namespace snes::coprocessor
+}  // namespace bitforge::coprocessor

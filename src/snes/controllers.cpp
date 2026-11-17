@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <cstdlib>
 
-namespace snes {
+namespace bitforge {
 
 auto device_info(Device device) -> const DeviceInfo& {
     for (const auto& d : kDevices) {
@@ -139,4 +139,4 @@ auto ControllerPort::serialize(Archive& ar) -> void {
        fire_held_, pause_held_);
 }
 
-} // namespace snes
+} // namespace bitforge

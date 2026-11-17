@@ -19,7 +19,7 @@
 #include <string>
 #include <vector>
 
-namespace snes::coprocessor {
+namespace bitforge::coprocessor {
 
 struct BoardInfo {
   Chip chip = Chip::None;
@@ -54,4 +54,4 @@ auto create_coprocessor(const BoardInfo& board, const std::vector<Byte>& rom, st
 
 auto sha256_hex(const std::vector<Byte>& data) -> std::string;
 
-} // namespace snes::coprocessor
+} // namespace bitforge::coprocessor

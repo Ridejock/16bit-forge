@@ -14,7 +14,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace snes::coprocessor {
+namespace bitforge::coprocessor {
 
 class GSU final : public Coprocessor {
 public:
@@ -184,4 +184,4 @@ private:
   auto op_iwt_lm_sm(unsigned n) -> void;
 };
 
-} // namespace snes::coprocessor
+} // namespace bitforge::coprocessor

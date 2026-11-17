@@ -12,7 +12,7 @@
 #include <sstream>
 #include <string>
 
-using namespace snes::video;
+using namespace bitforge::video;
 
 namespace {
 
@@ -107,7 +107,7 @@ auto declared_params(const std::string& source) -> std::vector<std::string> {
 }
 
 auto test_shipped_presets() -> void {
-    const std::string dir = std::string(SNES_SOURCE_DIR) + "/shaders/";
+    const std::string dir = std::string(BITFORGE_SOURCE_DIR) + "/shaders/";
     const std::string ini = read_file(dir + "presets.ini");
     CHECK(!ini.empty());
     const auto presets = parse_presets(ini, "presets.ini");
@@ -137,7 +137,7 @@ auto test_shipped_presets() -> void {
 } // namespace
 
 int main() {
-    snes::utils::Logger::set_level(snes::utils::LogLevel::Error);
+    bitforge::utils::Logger::set_level(bitforge::utils::LogLevel::Error);
     std::printf("=== Filter preset tests ===\n\n");
     int passed = 0;
     int failed = 0;

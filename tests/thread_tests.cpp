@@ -8,7 +8,7 @@
 //    sound-card thread pulling 10 ms periods (WASAPI-like), while the UI thread stalls for
 //    170 ms every half second (a Windows modal resize, a swapchain recreation). With emulation on
 //    its own thread that must give 0 underruns.
-// Build with -DSNES_TSAN=ON to run all of it under ThreadSanitizer (timing checks are skipped
+// Build with -DBITFORGE_TSAN=ON to run all of it under ThreadSanitizer (timing checks are skipped
 // there: instrumented emulation is slower than real time).
 #include "test_rom.hpp"
 #include "frontend/emu_thread.hpp"
@@ -27,17 +27,17 @@
 #include <vector>
 
 #if defined(__SANITIZE_THREAD__)
-#define SNES_UNDER_TSAN 1
+#define BITFORGE_UNDER_TSAN 1
 #elif defined(__has_feature)
 #if __has_feature(thread_sanitizer)
-#define SNES_UNDER_TSAN 1
+#define BITFORGE_UNDER_TSAN 1
 #endif
 #endif
-#ifndef SNES_UNDER_TSAN
-#define SNES_UNDER_TSAN 0
+#ifndef BITFORGE_UNDER_TSAN
+#define BITFORGE_UNDER_TSAN 0
 #endif
 
-using namespace snes::frontend;
+using namespace bitforge::frontend;
 
 namespace {
 
@@ -60,10 +60,10 @@ constexpr double kSpeedScriptS =
 
 auto count_underrun_warnings() -> int {
     int n = 0;
-    const int lines = snes::utils::Logger::line_count();
+    const int lines = bitforge::utils::Logger::line_count();
     for (int i = 0; i < lines; i++) {
-        const auto line = snes::utils::Logger::line(i);
-        if (line.level == snes::utils::LogLevel::Warning &&
+        const auto line = bitforge::utils::Logger::line(i);
+        if (line.level == bitforge::utils::LogLevel::Warning &&
             line.text.find("Audio underrun:") != std::string::npos) {
             n++;
         }
@@ -74,10 +74,10 @@ auto count_underrun_warnings() -> int {
 // Temporarily show Warning lines in the System ring so tests can see underrun reports.
 struct UnderrunLogCapture {
     UnderrunLogCapture() {
-        snes::utils::Logger::set_level(snes::utils::LogLevel::Warning);
-        snes::utils::Logger::clear();
+        bitforge::utils::Logger::set_level(bitforge::utils::LogLevel::Warning);
+        bitforge::utils::Logger::clear();
     }
-    ~UnderrunLogCapture() { snes::utils::Logger::set_level(snes::utils::LogLevel::Error); }
+    ~UnderrunLogCapture() { bitforge::utils::Logger::set_level(bitforge::utils::LogLevel::Error); }
 };
 
 #define CHECK(cond)                                                              \
@@ -433,7 +433,7 @@ auto test_harness(bool audio_sync) -> void {
     CHECK(r.state_error.empty());
     CHECK(r.longest_stall_ms >= 165.0);
     CHECK(r.frames_seen > 0);
-#if !SNES_UNDER_TSAN
+#if !BITFORGE_UNDER_TSAN
     const double fps = static_cast<double>(r.frames) / r.elapsed_s;
     CHECK(fps >= 57.0 && fps <= 63.0);  // ~60 fps throughout, whatever the UI does
     CHECK(r.silence_ms <= kAllowedSilenceMs);  // an underrun always adds silence
@@ -448,7 +448,7 @@ auto test_harness_control() -> void {
     std::printf("\n    170 ms stalls on the emulation thread: underruns %llu (%.0f ms silence)",
                 static_cast<unsigned long long>(r.underruns), r.silence_ms);
     CHECK(r.frames_ok);
-#if !SNES_UNDER_TSAN
+#if !BITFORGE_UNDER_TSAN
     CHECK(r.underruns >= 3);  // one per stall after the start-up grace
     CHECK(count_underrun_warnings() >= 1);  // normal-speed underruns still warn
 #endif
@@ -473,7 +473,7 @@ auto test_harness_speed() -> void {
     CHECK(r.frames_ok);
     CHECK(r.saw_rewind_status);
     CHECK(r.rewound >= 60);  // 1 s back at least (4 frames per step)
-#if !SNES_UNDER_TSAN
+#if !BITFORGE_UNDER_TSAN
     CHECK(r.normal_frames > 0);
     CHECK(static_cast<double>(r.fast_frames) > kFastForwardMinRatio * static_cast<double>(r.normal_frames));
     CHECK(r.recover_seen);
@@ -486,7 +486,7 @@ auto test_harness_speed() -> void {
 }  // namespace
 
 int main() {
-    snes::utils::Logger::set_level(snes::utils::LogLevel::Error);
+    bitforge::utils::Logger::set_level(bitforge::utils::LogLevel::Error);
     SDL_Init(0);
     struct Test { const char* name; void (*fn)(); };
     const Test tests[] = {
@@ -500,7 +500,7 @@ int main() {
         {"harness: same stalls on the emu thread (control)", test_harness_control},
         {"harness: fast-forward then rewind", test_harness_speed},
     };
-    std::printf("=== Emulation thread tests%s ===\n", SNES_UNDER_TSAN ? " (ThreadSanitizer: timing checks off)" : "");
+    std::printf("=== Emulation thread tests%s ===\n", BITFORGE_UNDER_TSAN ? " (ThreadSanitizer: timing checks off)" : "");
     int passed = 0, failed = 0;
     for (const auto& t : tests) {
         const int before = checks_failed;

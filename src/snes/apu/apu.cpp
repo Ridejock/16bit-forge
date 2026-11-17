@@ -6,7 +6,7 @@
 #include <algorithm>
 #include <cstring>
 
-namespace snes::apu {
+namespace bitforge::apu {
 
 namespace {
 
@@ -294,4 +294,4 @@ auto APU::load_spc(const Byte* data, size_t size) -> bool {
   return true;
 }
 
-} // namespace snes::apu
+} // namespace bitforge::apu

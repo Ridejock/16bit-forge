@@ -10,14 +10,14 @@
 #include <string>
 #include <vector>
 
-namespace snes {
+namespace bitforge {
 class System;
 namespace savestate {
 struct Info;
 }
 }
 
-namespace snes::frontend {
+namespace bitforge::frontend {
 
 // The only surface the UI sees of the core. No SDL or ImGui types cross this line.
 class Emulator {
@@ -64,11 +64,11 @@ public:
     auto set_joypad(int port, uint16_t state) -> void;
     // Pad 2 only reads as plugged in while a gamepad is assigned to it.
     auto set_port_connected(int port, bool connected) -> void;
-    // Multitap, SNES Mouse and Super Scope (see snes::ControllerPort). No-ops without a game.
-    auto set_port_device(int port, snes::Device device) -> void;
+    // Multitap, SNES Mouse and Super Scope (see bitforge::ControllerPort). No-ops without a game.
+    auto set_port_device(int port, bitforge::Device device) -> void;
     auto set_pad(int port, int slot, uint16_t state) -> void;
     auto add_mouse(int port, int dx, int dy, bool left, bool right) -> void;
-    auto set_scope(int port, const snes::ScopeInput& input) -> void;
+    auto set_scope(int port, const bitforge::ScopeInput& input) -> void;
 
     // ---- Save states: states/<rom>.<slot>.sst ---------------------------------------------
     struct SlotInfo {
@@ -134,4 +134,4 @@ private:
     bool seen_output_ = false;
 };
 
-} // namespace snes::frontend
+} // namespace bitforge::frontend

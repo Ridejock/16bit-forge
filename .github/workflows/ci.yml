@@ -51,8 +51,8 @@ jobs:
       - name: Upload zip
         uses: actions/upload-artifact@v4
         with:
-          name: snes_emulator-windows-x64
-          path: build/snes_emulator-*.zip
+          name: 16bitForge-windows-x64
+          path: build/16bitForge-*.zip
           if-no-files-found: error
 
   linux:

@@ -11,7 +11,7 @@
 #include <string_view>
 #include <vector>
 
-namespace snes::video {
+namespace bitforge::video {
 
 // Loads shaders/<name>.<spv|dxil|msl> next to the executable (compiled at build time by
 // SDL_shadercross, see cmake/Shaders.cmake), picking the format the device's backend takes.
@@ -32,4 +32,4 @@ namespace snes::video {
 [[nodiscard]] auto create_fullscreen_pipeline(SDL_GPUDevice* device, SDL_GPUShader* vertex, SDL_GPUShader* fragment,
                                               SDL_GPUTextureFormat format) -> SDL_GPUGraphicsPipeline*;
 
-} // namespace snes::video
+} // namespace bitforge::video

@@ -11,7 +11,7 @@
 #include <cstdio>
 #include <memory>
 
-namespace snes::memory {
+namespace bitforge::memory {
 
 namespace {
 
@@ -588,4 +588,4 @@ auto Bus::load_test_rom(const std::vector<Byte>& data, MapMode mode, std::size_t
   cartridge->load_raw(data, mode, sram_bytes);
 }
 
-} // namespace snes::memory
+} // namespace bitforge::memory

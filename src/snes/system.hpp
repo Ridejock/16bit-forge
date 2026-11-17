@@ -12,7 +12,7 @@
 #include "snes/cheats.hpp"
 #include "snes/msu1.hpp"
 
-namespace snes {
+namespace bitforge {
 
 class System {
 public:
@@ -93,4 +93,4 @@ private:
     auto serialize(Archive& ar) -> void;
 };
 
-} // namespace snes
+} // namespace bitforge

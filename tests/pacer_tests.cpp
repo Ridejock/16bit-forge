@@ -9,7 +9,7 @@
 #include <cstdio>
 #include <vector>
 
-using namespace snes::frontend;
+using namespace bitforge::frontend;
 
 namespace {
 

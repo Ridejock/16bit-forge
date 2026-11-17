@@ -4,7 +4,7 @@
 
 #include "imgui.h"
 
-namespace snes::utils {
+namespace bitforge::utils {
 
 // One log panel tab: the ring of one sink (System or Emulation) with its toolbar (level,
 // channel checkboxes, pause, clear, search, copy, log file) inside the current ImGui window.
@@ -25,4 +25,4 @@ private:
     bool follow_ = true;
 };
 
-} // namespace snes::utils
+} // namespace bitforge::utils

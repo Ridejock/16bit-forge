@@ -2,7 +2,7 @@
 #pragma once
 #include "snes/types.hpp"
 
-namespace snes::cpu {
+namespace bitforge::cpu {
 
 // What a 65C816 sees of the machine around it. The S-CPU runs on memory::Bus; the SA-1's second
 // 65C816 runs on the SA-1's own bus. Every access goes through read()/write(), so each bus does
@@ -26,4 +26,4 @@ protected:
   ~CpuBus() = default;
 };
 
-} // namespace snes::cpu
+} // namespace bitforge::cpu

@@ -18,7 +18,7 @@
 
 namespace {
 
-constexpr int kRate = snes::apu::APU::kSampleRate;
+constexpr int kRate = bitforge::apu::APU::kSampleRate;
 constexpr double kFrameRate = 60.0988;
 
 auto put32(std::ofstream& out, uint32_t v) -> void {
@@ -67,7 +67,7 @@ int main(int argc, char** argv) {
   }
   const double seconds = argc > 3 ? std::atof(argv[3]) : 8.0;
   const double skip = argc > 4 ? std::atof(argv[4]) : 0.0;
-  snes::utils::Logger::set_level(snes::utils::LogLevel::Warning);
+  bitforge::utils::Logger::set_level(bitforge::utils::LogLevel::Warning);
 
   std::vector<int16_t> pcm;
   int min_per_frame = 1 << 30, max_per_frame = 0;
@@ -76,19 +76,19 @@ int main(int argc, char** argv) {
 
   if (has_ext(argv[1], ".spc")) {
     std::ifstream in(argv[1], std::ios::binary);
-    std::vector<snes::Byte> data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    snes::apu::APU apu;
+    std::vector<bitforge::Byte> data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    bitforge::apu::APU apu;
     if (!apu.load_spc(data.data(), data.size())) {
       std::fprintf(stderr, "not an SPC file: %s\n", argv[1]);
       return 1;
     }
     while (pcm.size() < total) {
       apu.clear_samples();
-      apu.run_smp_cycles(snes::apu::APU::kSmpCyclesPerSample * 512);
+      apu.run_smp_cycles(bitforge::apu::APU::kSmpCyclesPerSample * 512);
       pcm.insert(pcm.end(), apu.samples().begin(), apu.samples().end());
     }
   } else {
-    snes::System sys;
+    bitforge::System sys;
     if (!sys.load_rom(argv[1])) return 1;
     sys.reset();
     while (pcm.size() < total) {

@@ -4,7 +4,7 @@
 
 #include <algorithm>
 
-namespace snes::apu {
+namespace bitforge::apu {
 
 namespace {
 
@@ -543,4 +543,4 @@ auto DSP::tick_rate_clock() -> void {
   }
 }
 
-} // namespace snes::apu
+} // namespace bitforge::apu

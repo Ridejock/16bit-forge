@@ -7,7 +7,7 @@
 #include <memory>
 #include <string>
 
-namespace snes::frontend {
+namespace bitforge::frontend {
 
 struct ViewOptions {
     int scale;
@@ -73,4 +73,4 @@ auto picture_lines(int frame_height) -> int;
 // enough. Any frame width maps onto the same display width.
 auto fit_viewport(int out_w, int out_h, const ViewOptions& view, int lines = GameWindow::kBaseHeight) -> video::Viewport;
 
-} // namespace snes::frontend
+} // namespace bitforge::frontend

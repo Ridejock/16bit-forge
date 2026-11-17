@@ -7,7 +7,7 @@
 #include <cstring>
 #include <fstream>
 
-namespace snes::memory {
+namespace bitforge::memory {
 
 namespace {
 
@@ -264,4 +264,4 @@ auto Cartridge::serialize(Archive& ar) -> void {
   if (chip) chip->serialize(ar);
 }
 
-} // namespace snes::memory
+} // namespace bitforge::memory

@@ -17,7 +17,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace snes::coprocessor {
+namespace bitforge::coprocessor {
 
 class SA1 final : public Coprocessor {
 public:
@@ -171,4 +171,4 @@ private:
   auto charge(uint32_t clocks) -> void { access_clocks_ += clocks; accesses_++; }
 };
 
-} // namespace snes::coprocessor
+} // namespace bitforge::coprocessor

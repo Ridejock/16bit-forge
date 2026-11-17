@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <utility>
 
-namespace snes::coprocessor {
+namespace bitforge::coprocessor {
 
 namespace {
 
@@ -610,4 +610,4 @@ auto Cx4::serialize(Archive& ar) -> void {
   pb_ &= 0x7FFF; p_ &= 0x7FFF; page_ &= 1;
 }
 
-} // namespace snes::coprocessor
+} // namespace bitforge::coprocessor

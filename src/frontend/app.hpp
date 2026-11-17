@@ -17,7 +17,7 @@
 #include <string>
 #include <vector>
 
-namespace snes::frontend {
+namespace bitforge::frontend {
 
 struct LaunchOptions {
     std::string rom;               // boot this ROM on start, if set
@@ -67,7 +67,7 @@ private:
     auto send_input() -> void;                       // pads, mouse and scope to the emulation thread
     auto present_game(const FrameImage& image) -> void;  // with the Super Scope crosshair
     auto set_mouse_captured(bool on) -> void;
-    auto uses(snes::Device device) const -> bool;
+    auto uses(bitforge::Device device) const -> bool;
     auto draw_log_panel() -> void;
     auto draw_state_menu(bool save) -> void;
     auto toggle_pause() -> void;
@@ -147,7 +147,7 @@ private:
     bool show_speed_ = false;
     bool show_cheats_ = false;
     // The Cheats tab's copy of the running game's list (the emulation thread owns the real one).
-    std::vector<snes::CheatEntry> cheats_;
+    std::vector<bitforge::CheatEntry> cheats_;
     std::string cheats_rom_;
     std::array<char, 128> cheat_code_{};
     std::array<char, 128> cheat_description_{};
@@ -162,7 +162,7 @@ private:
     bool pointer_inside_ = false;
     float pointer_x_ = 0.f;
     float pointer_y_ = 0.f;
-    snes::ScopeInput scope_aim_;
+    bitforge::ScopeInput scope_aim_;
     std::vector<uint32_t> overlay_;  // the frame with the crosshair drawn in
     std::string screenshot_path_;  // LaunchOptions: saved when the exit-after-frames count is reached
 
@@ -171,4 +171,4 @@ private:
     std::optional<std::string> dialog_result_;
 };
 
-} // namespace snes::frontend
+} // namespace bitforge::frontend

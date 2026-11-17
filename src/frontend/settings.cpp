@@ -7,7 +7,7 @@
 #include <string>
 #include <string_view>
 
-namespace snes::frontend {
+namespace bitforge::frontend {
 
 namespace {
 
@@ -209,7 +209,7 @@ auto Settings::save(const std::string& path) const -> bool {
         << "fast_forward_speed=" << speed.fast_forward_speed << "\n\n";
 
     out << "[ports]\n";
-    for (size_t p = 0; p < port_devices.size(); p++) out << "port" << (p + 1) << "=" << snes::device_info(port_devices[p]).id << "\n";
+    for (size_t p = 0; p < port_devices.size(); p++) out << "port" << (p + 1) << "=" << bitforge::device_info(port_devices[p]).id << "\n";
     out << "mouse_speed=" << pointer.mouse_speed << "\n"
         << "crosshair=" << (pointer.crosshair ? 1 : 0) << "\n\n";
 
@@ -253,4 +253,4 @@ auto Settings::save(const std::string& path) const -> bool {
     return static_cast<bool>(out);
 }
 
-} // namespace snes::frontend
+} // namespace bitforge::frontend

@@ -5,7 +5,7 @@
 #include <array>
 #include <vector>
 
-namespace snes::video {
+namespace bitforge::video {
 
 // SDL_GPU backend (Vulkan, Direct3D 12 or Metal, whichever SDL picks): uploads each frame to a
 // texture and runs the preset's passes, each a fullscreen triangle with its own fragment shader,
@@ -70,4 +70,4 @@ private:
     Uint32 capture_h_ = 0;
 };
 
-} // namespace snes::video
+} // namespace bitforge::video

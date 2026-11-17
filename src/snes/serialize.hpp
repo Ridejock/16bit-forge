@@ -24,7 +24,7 @@
 #include <type_traits>
 #include <vector>
 
-namespace snes {
+namespace bitforge {
 
 class Archive {
 public:
@@ -118,4 +118,4 @@ constexpr auto crc32(std::span<const uint8_t> data, uint32_t crc = 0) -> uint32_
     return ~crc;
 }
 
-} // namespace snes
+} // namespace bitforge

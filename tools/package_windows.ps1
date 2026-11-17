@@ -29,7 +29,7 @@ Push-Location $BuildDir
 try {
     cpack -C Release -G ZIP
     if ($LASTEXITCODE -ne 0) { throw "cpack failed" }
-    $zip = Get-ChildItem -Filter "snes_emulator-*.zip" | Sort-Object LastWriteTime | Select-Object -Last 1
+    $zip = Get-ChildItem -Filter "16bitForge-*.zip" | Sort-Object LastWriteTime | Select-Object -Last 1
     Write-Host ""
     Write-Host "Release zip: $($zip.FullName)"
 } finally {

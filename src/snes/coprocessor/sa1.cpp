@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <bit>
 
-namespace snes::coprocessor {
+namespace bitforge::coprocessor {
 
 namespace {
 
@@ -682,4 +682,4 @@ auto SA1::serialize(Archive& ar) -> void {
   cpu_.serialize(ar);
 }
 
-} // namespace snes::coprocessor
+} // namespace bitforge::coprocessor

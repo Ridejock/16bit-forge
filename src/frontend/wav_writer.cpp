@@ -3,7 +3,7 @@
 
 #include <algorithm>
 
-namespace snes::frontend {
+namespace bitforge::frontend {
 
 namespace {
 
@@ -70,4 +70,4 @@ auto WavWriter::close() -> void {
     file_ = nullptr;
 }
 
-} // namespace snes::frontend
+} // namespace bitforge::frontend

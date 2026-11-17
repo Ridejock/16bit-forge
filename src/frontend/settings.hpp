@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-namespace snes::frontend {
+namespace bitforge::frontend {
 
 struct Settings {
     static constexpr int kMinScale = 1;
@@ -53,4 +53,4 @@ struct Settings {
     auto save(const std::string& path) const -> bool;
 };
 
-} // namespace snes::frontend
+} // namespace bitforge::frontend

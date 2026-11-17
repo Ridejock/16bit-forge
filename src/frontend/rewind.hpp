@@ -13,7 +13,7 @@
 #include <span>
 #include <vector>
 
-namespace snes::frontend {
+namespace bitforge::frontend {
 
 // a XOR b (missing bytes of the shorter one count as zero), coded as varint pairs (run of zero
 // bytes, count of literal bytes) followed by the literals.
@@ -70,4 +70,4 @@ struct SpeedConfig {
     int fast_forward_speed = 4;                             // x real time; 0 = as fast as possible
 };
 
-} // namespace snes::frontend
+} // namespace bitforge::frontend

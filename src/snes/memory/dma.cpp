@@ -8,7 +8,7 @@
 #include <cstdint>
 #include <array>
 
-namespace snes::memory {
+namespace bitforge::memory {
 
 namespace {
 
@@ -194,4 +194,4 @@ auto Bus::hdma_run_line() -> void {
     dma_active = false;
 }
 
-} // namespace snes::memory
+} // namespace bitforge::memory

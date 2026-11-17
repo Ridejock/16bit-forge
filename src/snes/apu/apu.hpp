@@ -8,7 +8,7 @@
 #include <cstddef>
 #include <vector>
 
-namespace snes::apu {
+namespace bitforge::apu {
 
 // The sound module: S-SMP (SPC700 + 64 KB ARAM + timers + ports) and S-DSP.
 // The S-CPU talks to it through $2140-$2143 (mirrored to $217F); the system hands it master
@@ -133,4 +133,4 @@ private:
   std::vector<int16_t> samples_;
 };
 
-} // namespace snes::apu
+} // namespace bitforge::apu

@@ -21,7 +21,7 @@
 #define EMERALD_SHADER_FORMATS (SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_MSL)
 #endif
 
-namespace snes::video {
+namespace bitforge::video {
 
 namespace {
 
@@ -488,4 +488,4 @@ auto GpuBackend::finish_screenshot(SDL_GPUFence* fence, const std::string& path)
     save_bmp(path, pixels.data(), static_cast<int>(capture_w_), static_cast<int>(capture_h_));
 }
 
-} // namespace snes::video
+} // namespace bitforge::video

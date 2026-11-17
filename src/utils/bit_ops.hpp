@@ -2,7 +2,7 @@
 #pragma once
 #include "types.hpp"
 
-namespace snes::utils {
+namespace bitforge::utils {
 
 // Extract bits from value
 template<typename T>

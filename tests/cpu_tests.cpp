@@ -13,20 +13,20 @@
 
 class TestHarness {
 public:
-    snes::memory::Bus bus;
-    snes::cpu::CPU65c816 cpu;
+    bitforge::memory::Bus bus;
+    bitforge::cpu::CPU65c816 cpu;
     
     TestHarness() : cpu(bus) {
         bus.connect_cpu(&cpu);
     }
     
     // Load test code into ROM and set reset vector
-    void load_test_rom(snes::Address rom_base, const std::vector<snes::Byte>& code, snes::Address reset_addr) {
-        std::vector<snes::Byte> rom(32768, 0x00);  // 32KB ROM
+    void load_test_rom(bitforge::Address rom_base, const std::vector<bitforge::Byte>& code, bitforge::Address reset_addr) {
+        std::vector<bitforge::Byte> rom(32768, 0x00);  // 32KB ROM
         
         // Copy code into ROM at the correct offset
-        snes::Address offset = rom_base & 0x7FFF;
-        for (snes::Address i = 0; i < static_cast<snes::Address>(code.size()); i++) {
+        bitforge::Address offset = rom_base & 0x7FFF;
+        for (bitforge::Address i = 0; i < static_cast<bitforge::Address>(code.size()); i++) {
             rom[offset + i] = code[i];
         }
         
@@ -164,14 +164,14 @@ int main() {
 static int test_lda_immediate() {
     TestHarness h;
     
-    std::vector<snes::Byte> code = {
+    std::vector<bitforge::Byte> code = {
         0xA9, 0x42,       // LDA #$42
         0x8D, 0x00, 0x02  // STA $7E0200
     };
     h.load_test_rom(0x8000, code, 0x8000);
     h.run_cycles(2);
     
-    snes::Byte result = h.bus.read(0x7E0200);
+    bitforge::Byte result = h.bus.read(0x7E0200);
     if (result != 0x42) {
         printf("Expected 0x42, got 0x%02X", result);
         return 1;
@@ -183,14 +183,14 @@ static int test_lda_immediate() {
 static int test_sta_absolute() {
     TestHarness h;
     
-    std::vector<snes::Byte> code = {
+    std::vector<bitforge::Byte> code = {
         0xA9, 0x55,       // LDA #$55
         0x8D, 0x00, 0x02  // STA $7E0200
     };
     h.load_test_rom(0x8000, code, 0x8000);
     h.run_cycles(2);
     
-    snes::Byte result = h.bus.read(0x7E0200);
+    bitforge::Byte result = h.bus.read(0x7E0200);
     if (result != 0x55) {
         printf("Expected 0x55, got 0x%02X", result);
         return 1;
@@ -202,7 +202,7 @@ static int test_sta_absolute() {
 static int test_adc() {
     TestHarness h;
     
-    std::vector<snes::Byte> code = {
+    std::vector<bitforge::Byte> code = {
         0xA9, 0x10,       // LDA #$10
         0x18,             // CLC
         0x69, 0x20,       // ADC #$20
@@ -211,7 +211,7 @@ static int test_adc() {
     h.load_test_rom(0x8000, code, 0x8000);
     h.run_cycles(4);
     
-    snes::Byte result = h.bus.read(0x7E0200);
+    bitforge::Byte result = h.bus.read(0x7E0200);
     if (result != 0x30) {
         printf("Expected 0x30, got 0x%02X", result);
         return 1;
@@ -223,7 +223,7 @@ static int test_adc() {
 static int test_sbc() {
     TestHarness h;
     
-    std::vector<snes::Byte> code = {
+    std::vector<bitforge::Byte> code = {
         0xA9, 0x50,       // LDA #$50
         0x38,             // SEC
         0xE9, 0x20,       // SBC #$20
@@ -232,7 +232,7 @@ static int test_sbc() {
     h.load_test_rom(0x8000, code, 0x8000);
     h.run_cycles(4);
     
-    snes::Byte result = h.bus.read(0x7E0200);
+    bitforge::Byte result = h.bus.read(0x7E0200);
     if (result != 0x30) {
         printf("Expected 0x30, got 0x%02X", result);
         return 1;
@@ -246,7 +246,7 @@ static int test_and_ora_eor() {
     
     // Test AND
     {
-        std::vector<snes::Byte> code = {
+        std::vector<bitforge::Byte> code = {
             0xA9, 0xFF,       // LDA #$FF
             0x29, 0x0F,       // AND #$0F
             0x8D, 0x00, 0x02  // STA $7E0200
@@ -254,7 +254,7 @@ static int test_and_ora_eor() {
         h.load_test_rom(0x8000, code, 0x8000);
         h.run_cycles(3);
         
-        snes::Byte result = h.bus.read(0x7E0200);
+        bitforge::Byte result = h.bus.read(0x7E0200);
         if (result != 0x0F) {
             printf("AND: Expected 0x0F, got 0x%02X", result);
             return 1;
@@ -263,7 +263,7 @@ static int test_and_ora_eor() {
     
     // Test ORA
     {
-        std::vector<snes::Byte> code = {
+        std::vector<bitforge::Byte> code = {
             0xA9, 0x0F,       // LDA #$0F
             0x09, 0xF0,       // ORA #$F0
             0x8D, 0x00, 0x02  // STA $7E0200
@@ -271,7 +271,7 @@ static int test_and_ora_eor() {
         h.load_test_rom(0x8000, code, 0x8000);
         h.run_cycles(3);
         
-        snes::Byte result = h.bus.read(0x7E0200);
+        bitforge::Byte result = h.bus.read(0x7E0200);
         if (result != 0xFF) {
             printf("ORA: Expected 0xFF, got 0x%02X", result);
             return 1;
@@ -280,7 +280,7 @@ static int test_and_ora_eor() {
     
     // Test EOR
     {
-        std::vector<snes::Byte> code = {
+        std::vector<bitforge::Byte> code = {
             0xA9, 0xFF,       // LDA #$FF
             0x49, 0x0F,       // EOR #$0F
             0x8D, 0x00, 0x02  // STA $7E0200
@@ -288,7 +288,7 @@ static int test_and_ora_eor() {
         h.load_test_rom(0x8000, code, 0x8000);
         h.run_cycles(3);
         
-        snes::Byte result = h.bus.read(0x7E0200);
+        bitforge::Byte result = h.bus.read(0x7E0200);
         if (result != 0xF0) {
             printf("EOR: Expected 0xF0, got 0x%02X", result);
             return 1;
@@ -306,14 +306,14 @@ static int test_inc_dec() {
     {
         h.bus.write(0x7E0200, 0x05);
         
-        std::vector<snes::Byte> code = {
+        std::vector<bitforge::Byte> code = {
             0xEE, 0x00, 0x02,  // INC $7E0200
             0xEA              // NOP (padding, not strictly needed)
         };
         h.load_test_rom(0x8000, code, 0x8000);
         h.run_cycles(1);
         
-        snes::Byte result = h.bus.read(0x7E0200);
+        bitforge::Byte result = h.bus.read(0x7E0200);
         if (result != 0x06) {
             printf("INC: Expected 0x06, got 0x%02X", result);
             return 1;
@@ -324,14 +324,14 @@ static int test_inc_dec() {
     {
         h.bus.write(0x7E0200, 0x10);
         
-        std::vector<snes::Byte> code = {
+        std::vector<bitforge::Byte> code = {
             0xCE, 0x00, 0x02,  // DEC $7E0200
             0xEA              // NOP
         };
         h.load_test_rom(0x8000, code, 0x8000);
         h.run_cycles(1);
         
-        snes::Byte result = h.bus.read(0x7E0200);
+        bitforge::Byte result = h.bus.read(0x7E0200);
         if (result != 0x0F) {
             printf("DEC: Expected 0x0F, got 0x%02X", result);
             return 1;
@@ -347,7 +347,7 @@ static int test_transfers() {
     
     // Test TAX/TXA
     {
-        std::vector<snes::Byte> code = {
+        std::vector<bitforge::Byte> code = {
             0xA9, 0x42,       // LDA #$42
             0xAA,             // TAX (A -> X)
             0xA9, 0x00,       // LDA #$00 (clear A)
@@ -357,7 +357,7 @@ static int test_transfers() {
         h.load_test_rom(0x8000, code, 0x8000);
         h.run_cycles(5);
         
-        snes::Byte result = h.bus.read(0x7E0200);
+        bitforge::Byte result = h.bus.read(0x7E0200);
         if (result != 0x42) {
             printf("TAX/TXA: Expected 0x42, got 0x%02X", result);
             return 1;
@@ -366,7 +366,7 @@ static int test_transfers() {
     
     // Test TAY/TYA
     {
-        std::vector<snes::Byte> code = {
+        std::vector<bitforge::Byte> code = {
             0xA9, 0x77,       // LDA #$77
             0xA8,             // TAY (A -> Y)
             0xA9, 0x00,       // LDA #$00 (clear A)
@@ -376,7 +376,7 @@ static int test_transfers() {
         h.load_test_rom(0x8000, code, 0x8000);
         h.run_cycles(5);
         
-        snes::Byte result = h.bus.read(0x7E0200);
+        bitforge::Byte result = h.bus.read(0x7E0200);
         if (result != 0x77) {
             printf("TAY/TYA: Expected 0x77, got 0x%02X", result);
             return 1;
@@ -392,7 +392,7 @@ static int test_branches() {
     
     // Test BEQ (branch if equal / Z=1)
     {
-        std::vector<snes::Byte> code = {
+        std::vector<bitforge::Byte> code = {
             0xA9, 0x00,       // LDA #$00 (sets Z=1)
             0xF0, 0x02,       // BEQ +2 (skip next 2 bytes)
             0xA9, 0xFF,       // LDA #$FF (should be skipped)
@@ -401,7 +401,7 @@ static int test_branches() {
         h.load_test_rom(0x8000, code, 0x8000);
         h.run_cycles(3);
         
-        snes::Byte result = h.bus.read(0x7E0200);
+        bitforge::Byte result = h.bus.read(0x7E0200);
         if (result != 0x00) {
             printf("BEQ: Expected 0x00, got 0x%02X", result);
             return 1;
@@ -410,7 +410,7 @@ static int test_branches() {
     
     // Test BNE (branch if not equal / Z=0)
     {
-        std::vector<snes::Byte> code = {
+        std::vector<bitforge::Byte> code = {
             0xA9, 0x01,       // LDA #$01 (sets Z=0)
             0xD0, 0x02,       // BNE +2 (skip next 2 bytes)
             0xA9, 0xFF,       // LDA #$FF (should be skipped)
@@ -419,7 +419,7 @@ static int test_branches() {
         h.load_test_rom(0x8000, code, 0x8000);
         h.run_cycles(3);
         
-        snes::Byte result = h.bus.read(0x7E0200);
+        bitforge::Byte result = h.bus.read(0x7E0200);
         if (result != 0x01) {
             printf("BNE: Expected 0x01, got 0x%02X", result);
             return 1;
@@ -428,7 +428,7 @@ static int test_branches() {
     
     // Test BCS (branch if carry set)
     {
-        std::vector<snes::Byte> code = {
+        std::vector<bitforge::Byte> code = {
             0xA9, 0xAA,       // LDA #$AA
             0x38,             // SEC (set carry)
             0xB0, 0x02,       // BCS +2 (skip next 2 bytes)
@@ -438,7 +438,7 @@ static int test_branches() {
         h.load_test_rom(0x8000, code, 0x8000);
         h.run_cycles(4);
         
-        snes::Byte result = h.bus.read(0x7E0200);
+        bitforge::Byte result = h.bus.read(0x7E0200);
         if (result != 0xAA) {
             printf("BCS: Expected 0xAA, got 0x%02X", result);
             return 1;
@@ -447,7 +447,7 @@ static int test_branches() {
     
     // Test BCC (branch if carry clear)
     {
-        std::vector<snes::Byte> code = {
+        std::vector<bitforge::Byte> code = {
             0xA9, 0xBB,       // LDA #$BB
             0x18,             // CLC (clear carry)
             0x90, 0x02,       // BCC +2 (skip next 2 bytes)
@@ -457,7 +457,7 @@ static int test_branches() {
         h.load_test_rom(0x8000, code, 0x8000);
         h.run_cycles(4);
         
-        snes::Byte result = h.bus.read(0x7E0200);
+        bitforge::Byte result = h.bus.read(0x7E0200);
         if (result != 0xBB) {
             printf("BCC: Expected 0xBB, got 0x%02X", result);
             return 1;
@@ -473,7 +473,7 @@ static int test_stack() {
     
     // Test PHA/PLA
     {
-        std::vector<snes::Byte> code = {
+        std::vector<bitforge::Byte> code = {
             0xA9, 0x42,       // LDA #$42
             0x48,             // PHA (push A)
             0xA9, 0x00,       // LDA #$00
@@ -483,7 +483,7 @@ static int test_stack() {
         h.load_test_rom(0x8000, code, 0x8000);
         h.run_cycles(5);
         
-        snes::Byte result = h.bus.read(0x7E0200);
+        bitforge::Byte result = h.bus.read(0x7E0200);
         if (result != 0x42) {
             printf("PHA/PLA: Expected 0x42, got 0x%02X", result);
             return 1;
@@ -499,7 +499,7 @@ static int test_cmp() {
     
     // Test CMP equal
     {
-        std::vector<snes::Byte> code = {
+        std::vector<bitforge::Byte> code = {
             0xA9, 0x10,       // LDA #$10
             0xC9, 0x10,       // CMP #$10 (should set Z=1)
             0xF0, 0x02,       // BEQ +2 (skip next 2 bytes)
@@ -509,7 +509,7 @@ static int test_cmp() {
         h.load_test_rom(0x8000, code, 0x8000);
         h.run_cycles(4);
         
-        snes::Byte result = h.bus.read(0x7E0200);
+        bitforge::Byte result = h.bus.read(0x7E0200);
         if (result != 0x10) {
             printf("CMP equal: Expected 0x10, got 0x%02X", result);
             return 1;
@@ -518,7 +518,7 @@ static int test_cmp() {
     
     // Test CMP less than (sets C=1 if A >= value)
     {
-        std::vector<snes::Byte> code = {
+        std::vector<bitforge::Byte> code = {
             0xA9, 0x20,       // LDA #$20
             0xC9, 0x10,       // CMP #$10 (A > value, C=1)
             0xB0, 0x02,       // BCS +2 (skip next 2 bytes)
@@ -528,7 +528,7 @@ static int test_cmp() {
         h.load_test_rom(0x8000, code, 0x8000);
         h.run_cycles(4);
         
-        snes::Byte result = h.bus.read(0x7E0200);
+        bitforge::Byte result = h.bus.read(0x7E0200);
         if (result != 0x20) {
             printf("CMP greater: Expected 0x20, got 0x%02X", result);
             return 1;
@@ -544,7 +544,7 @@ static int test_flags() {
     
     // Test SEC/BCS
     {
-        std::vector<snes::Byte> code = {
+        std::vector<bitforge::Byte> code = {
             0xA9, 0xAA,       // LDA #$AA
             0x38,             // SEC
             0xB0, 0x02,       // BCS +2 (should branch)
@@ -554,7 +554,7 @@ static int test_flags() {
         h.load_test_rom(0x8000, code, 0x8000);
         h.run_cycles(4);
         
-        snes::Byte result = h.bus.read(0x7E0200);
+        bitforge::Byte result = h.bus.read(0x7E0200);
         if (result != 0xAA) {
             printf("SEC/BCS: Expected 0xAA, got 0x%02X", result);
             return 1;
@@ -563,7 +563,7 @@ static int test_flags() {
     
     // Test CLC/BCC
     {
-        std::vector<snes::Byte> code = {
+        std::vector<bitforge::Byte> code = {
             0xA9, 0xBB,       // LDA #$BB
             0x18,             // CLC
             0x90, 0x02,       // BCC +2 (should branch)
@@ -573,7 +573,7 @@ static int test_flags() {
         h.load_test_rom(0x8000, code, 0x8000);
         h.run_cycles(4);
         
-        snes::Byte result = h.bus.read(0x7E0200);
+        bitforge::Byte result = h.bus.read(0x7E0200);
         if (result != 0xBB) {
             printf("CLC/BCC: Expected 0xBB, got 0x%02X", result);
             return 1;
@@ -589,14 +589,14 @@ static int test_ldx_ldy() {
     
     // Test LDX
     {
-        std::vector<snes::Byte> code = {
+        std::vector<bitforge::Byte> code = {
             0xA2, 0x42,       // LDX #$42
             0x8E, 0x00, 0x02  // STX $7E0200
         };
         h.load_test_rom(0x8000, code, 0x8000);
         h.run_cycles(2);
         
-        snes::Byte result = h.bus.read(0x7E0200);
+        bitforge::Byte result = h.bus.read(0x7E0200);
         if (result != 0x42) {
             printf("LDX: Expected 0x42, got 0x%02X", result);
             return 1;
@@ -605,14 +605,14 @@ static int test_ldx_ldy() {
     
     // Test LDY
     {
-        std::vector<snes::Byte> code = {
+        std::vector<bitforge::Byte> code = {
             0xA0, 0x77,       // LDY #$77
             0x8C, 0x00, 0x02  // STY $7E0200
         };
         h.load_test_rom(0x8000, code, 0x8000);
         h.run_cycles(2);
         
-        snes::Byte result = h.bus.read(0x7E0200);
+        bitforge::Byte result = h.bus.read(0x7E0200);
         if (result != 0x77) {
             printf("LDY: Expected 0x77, got 0x%02X", result);
             return 1;
@@ -628,7 +628,7 @@ static int test_stx_sty() {
     
     // Test STX
     {
-        std::vector<snes::Byte> code = {
+        std::vector<bitforge::Byte> code = {
             0xA9, 0x55,       // LDA #$55
             0xAA,             // TAX
             0x8E, 0x00, 0x02  // STX $7E0200
@@ -636,7 +636,7 @@ static int test_stx_sty() {
         h.load_test_rom(0x8000, code, 0x8000);
         h.run_cycles(3);
         
-        snes::Byte result = h.bus.read(0x7E0200);
+        bitforge::Byte result = h.bus.read(0x7E0200);
         if (result != 0x55) {
             printf("STX: Expected 0x55, got 0x%02X", result);
             return 1;
@@ -645,7 +645,7 @@ static int test_stx_sty() {
     
     // Test STY
     {
-        std::vector<snes::Byte> code = {
+        std::vector<bitforge::Byte> code = {
             0xA9, 0x33,       // LDA #$33
             0xA8,             // TAY
             0x8C, 0x00, 0x02  // STY $7E0200
@@ -653,7 +653,7 @@ static int test_stx_sty() {
         h.load_test_rom(0x8000, code, 0x8000);
         h.run_cycles(3);
         
-        snes::Byte result = h.bus.read(0x7E0200);
+        bitforge::Byte result = h.bus.read(0x7E0200);
         if (result != 0x33) {
             printf("STY: Expected 0x33, got 0x%02X", result);
             return 1;
@@ -669,7 +669,7 @@ static int test_dex_dey_inx_iny() {
     
     // Test INX
     {
-        std::vector<snes::Byte> code = {
+        std::vector<bitforge::Byte> code = {
             0xA2, 0x05,       // LDX #$05
             0xE8,             // INX
             0x8E, 0x00, 0x02  // STX $7E0200
@@ -677,7 +677,7 @@ static int test_dex_dey_inx_iny() {
         h.load_test_rom(0x8000, code, 0x8000);
         h.run_cycles(3);
         
-        snes::Byte result = h.bus.read(0x7E0200);
+        bitforge::Byte result = h.bus.read(0x7E0200);
         if (result != 0x06) {
             printf("INX: Expected 0x06, got 0x%02X", result);
             return 1;
@@ -686,7 +686,7 @@ static int test_dex_dey_inx_iny() {
     
     // Test DEX
     {
-        std::vector<snes::Byte> code = {
+        std::vector<bitforge::Byte> code = {
             0xA2, 0x05,       // LDX #$05
             0xCA,             // DEX
             0x8E, 0x00, 0x02  // STX $7E0200
@@ -694,7 +694,7 @@ static int test_dex_dey_inx_iny() {
         h.load_test_rom(0x8000, code, 0x8000);
         h.run_cycles(3);
         
-        snes::Byte result = h.bus.read(0x7E0200);
+        bitforge::Byte result = h.bus.read(0x7E0200);
         if (result != 0x04) {
             printf("DEX: Expected 0x04, got 0x%02X", result);
             return 1;
@@ -703,7 +703,7 @@ static int test_dex_dey_inx_iny() {
     
     // Test INY
     {
-        std::vector<snes::Byte> code = {
+        std::vector<bitforge::Byte> code = {
             0xA0, 0x10,       // LDY #$10
             0xC8,             // INY
             0x8C, 0x00, 0x02  // STY $7E0200
@@ -711,7 +711,7 @@ static int test_dex_dey_inx_iny() {
         h.load_test_rom(0x8000, code, 0x8000);
         h.run_cycles(3);
         
-        snes::Byte result = h.bus.read(0x7E0200);
+        bitforge::Byte result = h.bus.read(0x7E0200);
         if (result != 0x11) {
             printf("INY: Expected 0x11, got 0x%02X", result);
             return 1;
@@ -720,7 +720,7 @@ static int test_dex_dey_inx_iny() {
     
     // Test DEY
     {
-        std::vector<snes::Byte> code = {
+        std::vector<bitforge::Byte> code = {
             0xA0, 0x10,       // LDY #$10
             0x88,             // DEY
             0x8C, 0x00, 0x02  // STY $7E0200
@@ -728,7 +728,7 @@ static int test_dex_dey_inx_iny() {
         h.load_test_rom(0x8000, code, 0x8000);
         h.run_cycles(3);
         
-        snes::Byte result = h.bus.read(0x7E0200);
+        bitforge::Byte result = h.bus.read(0x7E0200);
         if (result != 0x0F) {
             printf("DEY: Expected 0x0F, got 0x%02X", result);
             return 1;
@@ -744,7 +744,7 @@ static int test_rol_ror() {
     
     // Test ROL (rotate left)
     {
-        std::vector<snes::Byte> code = {
+        std::vector<bitforge::Byte> code = {
             0xA9, 0x81,       // LDA #$81 (10000001)
             0x18,             // CLC (carry = 0)
             0x2A,             // ROL A (00000010, carry = 1)
@@ -753,7 +753,7 @@ static int test_rol_ror() {
         h.load_test_rom(0x8000, code, 0x8000);
         h.run_cycles(4);
         
-        snes::Byte result = h.bus.read(0x7E0200);
+        bitforge::Byte result = h.bus.read(0x7E0200);
         if (result != 0x02) {
             printf("ROL: Expected 0x02, got 0x%02X", result);
             return 1;
@@ -762,7 +762,7 @@ static int test_rol_ror() {
     
     // Test ROR (rotate right)
     {
-        std::vector<snes::Byte> code = {
+        std::vector<bitforge::Byte> code = {
             0xA9, 0x81,       // LDA #$81 (10000001)
             0x38,             // SEC (carry = 1)
             0x6A,             // ROR A (11000000, carry = 1)
@@ -771,7 +771,7 @@ static int test_rol_ror() {
         h.load_test_rom(0x8000, code, 0x8000);
         h.run_cycles(4);
         
-        snes::Byte result = h.bus.read(0x7E0200);
+        bitforge::Byte result = h.bus.read(0x7E0200);
         if (result != 0xC0) {
             printf("ROR: Expected 0xC0, got 0x%02X", result);
             return 1;
@@ -787,7 +787,7 @@ static int test_asl_lsr() {
     
     // Test ASL (arithmetic shift left)
     {
-        std::vector<snes::Byte> code = {
+        std::vector<bitforge::Byte> code = {
             0xA9, 0x04,       // LDA #$04
             0x0A,             // ASL A
             0x8D, 0x00, 0x02  // STA $7E0200
@@ -795,7 +795,7 @@ static int test_asl_lsr() {
         h.load_test_rom(0x8000, code, 0x8000);
         h.run_cycles(3);
         
-        snes::Byte result = h.bus.read(0x7E0200);
+        bitforge::Byte result = h.bus.read(0x7E0200);
         if (result != 0x08) {
             printf("ASL: Expected 0x08, got 0x%02X", result);
             return 1;
@@ -804,7 +804,7 @@ static int test_asl_lsr() {
     
     // Test LSR (logical shift right)
     {
-        std::vector<snes::Byte> code = {
+        std::vector<bitforge::Byte> code = {
             0xA9, 0x08,       // LDA #$08
             0x4A,             // LSR A
             0x8D, 0x00, 0x02  // STA $7E0200
@@ -812,7 +812,7 @@ static int test_asl_lsr() {
         h.load_test_rom(0x8000, code, 0x8000);
         h.run_cycles(3);
         
-        snes::Byte result = h.bus.read(0x7E0200);
+        bitforge::Byte result = h.bus.read(0x7E0200);
         if (result != 0x04) {
             printf("LSR: Expected 0x04, got 0x%02X", result);
             return 1;
@@ -826,7 +826,7 @@ static int test_asl_lsr() {
 // The read uses the $80 bank mirror.
 static int test_ppu_register_bus() {
     TestHarness h;
-    snes::ppu::PPU ppu;
+    bitforge::ppu::PPU ppu;
     h.bus.connect_ppu(&ppu);
     ppu.connect_bus(&h.bus);
 
@@ -834,7 +834,7 @@ static int test_ppu_register_bus() {
     h.bus.write(0x002122, 0xAB);
     h.bus.write(0x802121, 0x00);
 
-    snes::Byte color = h.bus.read(0x80213B);
+    bitforge::Byte color = h.bus.read(0x80213B);
     if (color != 0xAB) {
         printf("CGRAM: Expected 0xAB, got 0x%02X", color);
         return 1;
@@ -882,7 +882,7 @@ static int test_cpu_io_math() {
 // Master clocks per scanline (the PPU steps in 21.477 MHz master clocks).
 static constexpr uint32_t CYCLES_PER_SCANLINE = 1364;
 
-static void fill_nmi_handler(std::vector<snes::Byte>& code) {
+static void fill_nmi_handler(std::vector<bitforge::Byte>& code) {
     // $8100: LDA #$5A / STA $0200 / RTI
     code[0x100] = 0xA9;
     code[0x101] = 0x5A;
@@ -896,11 +896,11 @@ static void fill_nmi_handler(std::vector<snes::Byte>& code) {
 
 static int test_nmi_taken() {
     TestHarness h;
-    snes::ppu::PPU ppu;
+    bitforge::ppu::PPU ppu;
     h.bus.connect_ppu(&ppu);
     ppu.connect_bus(&h.bus);
 
-    std::vector<snes::Byte> code(32768, 0xEA);
+    std::vector<bitforge::Byte> code(32768, 0xEA);
     code[0] = 0xA9; code[1] = 0x80;                         // LDA #$80
     code[2] = 0x8D; code[3] = 0x00; code[4] = 0x42;         // STA $4200
     code[5] = 0x4C; code[6] = 0x05; code[7] = 0x80;         // JMP $8005
@@ -916,7 +916,7 @@ static int test_nmi_taken() {
         printf("HVBJOY bit 7 clear inside vblank");
         return 1;
     }
-    snes::Byte status = h.bus.read(0x004210);
+    bitforge::Byte status = h.bus.read(0x004210);
     if (status != 0x82) {
         printf("RDNMI: Expected 0x82, got 0x%02X", status);
         return 1;
@@ -930,7 +930,7 @@ static int test_nmi_taken() {
     h.run_cycles(1);
     h.run_cycles(3);
 
-    snes::Byte result = h.bus.read(0x7E0200);
+    bitforge::Byte result = h.bus.read(0x7E0200);
     if (result != 0x5A) {
         printf("NMI handler did not run, got 0x%02X", result);
         return 1;
@@ -940,11 +940,11 @@ static int test_nmi_taken() {
 
 static int test_nmi_disabled() {
     TestHarness h;
-    snes::ppu::PPU ppu;
+    bitforge::ppu::PPU ppu;
     h.bus.connect_ppu(&ppu);
     ppu.connect_bus(&h.bus);
 
-    std::vector<snes::Byte> code(32768, 0xEA);
+    std::vector<bitforge::Byte> code(32768, 0xEA);
     code[0] = 0x4C; code[1] = 0x00; code[2] = 0x80;         // JMP $8000
     fill_nmi_handler(code);
 
@@ -953,7 +953,7 @@ static int test_nmi_disabled() {
     ppu.step(225 * CYCLES_PER_SCANLINE);
     h.cpu.step();
 
-    snes::Byte result = h.bus.read(0x7E0200);
+    bitforge::Byte result = h.bus.read(0x7E0200);
     if (result != 0x00) {
         printf("NMI ran with NMITIMEN clear, got 0x%02X", result);
         return 1;
@@ -963,7 +963,7 @@ static int test_nmi_disabled() {
 
 static int test_vblank_ends() {
     TestHarness h;
-    snes::ppu::PPU ppu;
+    bitforge::ppu::PPU ppu;
     h.bus.connect_ppu(&ppu);
     ppu.connect_bus(&h.bus);
 
@@ -973,7 +973,7 @@ static int test_vblank_ends() {
         printf("HVBJOY still in vblank after the frame");
         return 1;
     }
-    snes::Byte status = h.bus.read(0x004210);
+    bitforge::Byte status = h.bus.read(0x004210);
     if (status & 0x80) {
         printf("RDNMI still set after vblank, got 0x%02X", status);
         return 1;
@@ -985,19 +985,19 @@ static int test_vblank_ends() {
     return 0;
 }
 
-static snes::Word read_vram_word(snes::memory::Bus& bus, snes::Word addr) {
+static bitforge::Word read_vram_word(bitforge::memory::Bus& bus, bitforge::Word addr) {
     // Increment on the high byte, no translation, so the pair reads one physical word.
     bus.write(0x002115, 0x80);
-    bus.write(0x002116, static_cast<snes::Byte>(addr & 0xFF));
-    bus.write(0x002117, static_cast<snes::Byte>((addr >> 8) & 0xFF));
-    snes::Byte low = bus.read(0x002139);
-    snes::Byte high = bus.read(0x00213A);
-    return static_cast<snes::Word>(low | (high << 8));
+    bus.write(0x002116, static_cast<bitforge::Byte>(addr & 0xFF));
+    bus.write(0x002117, static_cast<bitforge::Byte>((addr >> 8) & 0xFF));
+    bitforge::Byte low = bus.read(0x002139);
+    bitforge::Byte high = bus.read(0x00213A);
+    return static_cast<bitforge::Word>(low | (high << 8));
 }
 
 static int test_vram_port() {
     TestHarness h;
-    snes::ppu::PPU ppu;
+    bitforge::ppu::PPU ppu;
     h.bus.connect_ppu(&ppu);
     ppu.connect_bus(&h.bus);
 
@@ -1010,7 +1010,7 @@ static int test_vram_port() {
     h.bus.write(0x002118, 0x78);
     h.bus.write(0x002119, 0x56);
 
-    snes::Word word = read_vram_word(h.bus, 0x0000);
+    bitforge::Word word = read_vram_word(h.bus, 0x0000);
     if (word != 0x1234) {
         printf("word 0: Expected 0x1234, got 0x%04X", word);
         return 1;
@@ -1131,22 +1131,22 @@ static int test_vram_port() {
     return 0;
 }
 
-static void write_cgram(snes::memory::Bus& bus, snes::Byte index, snes::Word color) {
+static void write_cgram(bitforge::memory::Bus& bus, bitforge::Byte index, bitforge::Word color) {
     bus.write(0x002121, index);
-    bus.write(0x002122, static_cast<snes::Byte>(color & 0xFF));
-    bus.write(0x002122, static_cast<snes::Byte>((color >> 8) & 0xFF));
+    bus.write(0x002122, static_cast<bitforge::Byte>(color & 0xFF));
+    bus.write(0x002122, static_cast<bitforge::Byte>((color >> 8) & 0xFF));
 }
 
 // 4bpp tile: 8 words of planes 0/1, then 8 words of planes 2/3. One word per pixel row.
-static void write_4bpp_tile(snes::memory::Bus& bus, snes::Word word_addr,
-                             snes::Byte plane0, snes::Byte plane1, int solid_rows) {
+static void write_4bpp_tile(bitforge::memory::Bus& bus, bitforge::Word word_addr,
+                             bitforge::Byte plane0, bitforge::Byte plane1, int solid_rows) {
     bus.write(0x002115, 0x80);
-    bus.write(0x002116, static_cast<snes::Byte>(word_addr & 0xFF));
-    bus.write(0x002117, static_cast<snes::Byte>((word_addr >> 8) & 0xFF));
+    bus.write(0x002116, static_cast<bitforge::Byte>(word_addr & 0xFF));
+    bus.write(0x002117, static_cast<bitforge::Byte>((word_addr >> 8) & 0xFF));
     for (int row = 0; row < 8; row++) {
         bool solid = row < solid_rows;
-        bus.write(0x002118, solid ? plane0 : static_cast<snes::Byte>(0));
-        bus.write(0x002119, solid ? plane1 : static_cast<snes::Byte>(0));
+        bus.write(0x002118, solid ? plane0 : static_cast<bitforge::Byte>(0));
+        bus.write(0x002119, solid ? plane1 : static_cast<bitforge::Byte>(0));
     }
     for (int row = 0; row < 8; row++) {
         bus.write(0x002118, 0x00);
@@ -1154,16 +1154,16 @@ static void write_4bpp_tile(snes::memory::Bus& bus, snes::Word word_addr,
     }
 }
 
-static void write_tilemap_entry(snes::memory::Bus& bus, snes::Word word_addr, snes::Word entry) {
+static void write_tilemap_entry(bitforge::memory::Bus& bus, bitforge::Word word_addr, bitforge::Word entry) {
     bus.write(0x002115, 0x80);
-    bus.write(0x002116, static_cast<snes::Byte>(word_addr & 0xFF));
-    bus.write(0x002117, static_cast<snes::Byte>((word_addr >> 8) & 0xFF));
-    bus.write(0x002118, static_cast<snes::Byte>(entry & 0xFF));
-    bus.write(0x002119, static_cast<snes::Byte>((entry >> 8) & 0xFF));
+    bus.write(0x002116, static_cast<bitforge::Byte>(word_addr & 0xFF));
+    bus.write(0x002117, static_cast<bitforge::Byte>((word_addr >> 8) & 0xFF));
+    bus.write(0x002118, static_cast<bitforge::Byte>(entry & 0xFF));
+    bus.write(0x002119, static_cast<bitforge::Byte>((entry >> 8) & 0xFF));
 }
 
 static int expect_pixel(const uint32_t* fb, int x, int y, uint32_t color, const char* label) {
-    uint32_t pixel = fb[y * snes::ppu::PPU::WIDTH + x];  // 256-wide frames only
+    uint32_t pixel = fb[y * bitforge::ppu::PPU::WIDTH + x];  // 256-wide frames only
     if (pixel != color) {
         printf("%s (%d,%d): Expected 0x%08X, got 0x%08X", label, x, y, color, pixel);
         return 1;
@@ -1173,7 +1173,7 @@ static int expect_pixel(const uint32_t* fb, int x, int y, uint32_t color, const 
 
 static int test_bg_sampler_rows() {
     TestHarness h;
-    snes::ppu::PPU ppu;
+    bitforge::ppu::PPU ppu;
     h.bus.connect_ppu(&ppu);
     ppu.connect_bus(&h.bus);
 
@@ -1188,7 +1188,7 @@ static int test_bg_sampler_rows() {
     write_4bpp_tile(h.bus, 0x0020, 0xFF, 0x00, 1);  // tile 2, color 1 on its top row only
     write_4bpp_tile(h.bus, 0x0030, 0x80, 0x00, 8);  // tile 3, color 1 on the leftmost pixel
 
-    constexpr snes::Word map = 0x0400;
+    constexpr bitforge::Word map = 0x0400;
     write_tilemap_entry(h.bus, map + 0, 0x0000);
     write_tilemap_entry(h.bus, map + 1, 0x4003);          // h-flip
     write_tilemap_entry(h.bus, map + 32, 0x0001);         // next tilemap row
@@ -1226,8 +1226,8 @@ static int test_bg_sampler_rows() {
 }
 
 static int test_log_ring() {
-    using snes::utils::LogLevel;
-    using snes::utils::Logger;
+    using bitforge::utils::LogLevel;
+    using bitforge::utils::Logger;
 
     LogLevel previous = Logger::level();
     Logger::set_level(LogLevel::Info);
@@ -1273,10 +1273,10 @@ static int test_log_ring() {
 // Channels route to the System or Emulation sink; disabled channels and levels below a sink's
 // filter cost nothing (the macro's arguments aren't evaluated); files are capped and rotated.
 static int test_log_channels() {
-    using snes::utils::LogChannel;
-    using snes::utils::LogLevel;
-    using snes::utils::Logger;
-    using snes::utils::LogSink;
+    using bitforge::utils::LogChannel;
+    using bitforge::utils::LogLevel;
+    using bitforge::utils::Logger;
+    using bitforge::utils::LogSink;
     int failures = 0;
     auto expect = [&](bool ok, const char* what) {
         if (!ok) {
@@ -1346,9 +1346,9 @@ static int test_log_channels() {
 
 namespace {
 
-using Bytes = std::vector<snes::Byte>;
+using Bytes = std::vector<bitforge::Byte>;
 
-constexpr snes::Address lorom_offset(snes::Address addr) {
+constexpr bitforge::Address lorom_offset(bitforge::Address addr) {
     return (((addr >> 16) & 0x7F) << 15) | (addr & 0x7FFF);
 }
 
@@ -1356,11 +1356,11 @@ constexpr snes::Address lorom_offset(snes::Address addr) {
 struct RomBuilder {
     Bytes rom;
     explicit RomBuilder(size_t banks = 1) : rom(banks * 0x8000, 0x00) { vector(0xFFFC, 0x8000); }
-    void put(snes::Address addr, const Bytes& bytes) {
-        for (size_t i = 0; i < bytes.size(); i++) rom[lorom_offset(addr + static_cast<snes::Address>(i))] = bytes[i];
+    void put(bitforge::Address addr, const Bytes& bytes) {
+        for (size_t i = 0; i < bytes.size(); i++) rom[lorom_offset(addr + static_cast<bitforge::Address>(i))] = bytes[i];
     }
-    void vector(snes::Word addr, snes::Word target) {
-        put(addr, {static_cast<snes::Byte>(target), static_cast<snes::Byte>(target >> 8)});
+    void vector(bitforge::Word addr, bitforge::Word target) {
+        put(addr, {static_cast<bitforge::Byte>(target), static_cast<bitforge::Byte>(target >> 8)});
     }
 };
 
@@ -1381,7 +1381,7 @@ int expect_eq(unsigned actual, unsigned expected, const char* what) {
     return 1;
 }
 
-unsigned read16(TestHarness& h, snes::Address addr) {
+unsigned read16(TestHarness& h, bitforge::Address addr) {
     return static_cast<unsigned>(h.bus.read(addr) | (h.bus.read(addr + 1) << 8));
 }
 
@@ -1538,7 +1538,7 @@ static int test_block_move() {
     boot(h, b);
     if (!run_to_stp(h)) return 1;
     auto r = h.cpu.registers();
-    for (snes::Address i = 0; i < 4; i++) {
+    for (bitforge::Address i = 0; i < 4; i++) {
         const unsigned want = 0x11u * (i + 1);
         if (expect_eq(h.bus.read(0x7F2000 + i), want, "MVN byte") ||
             expect_eq(h.bus.read(0x7F3000 + i), want, "MVP byte")) return 1;
@@ -1603,7 +1603,7 @@ static int test_emulation_mode_rules() {
 // Vectors point at STP stubs so the test can see which one ran.
 static RomBuilder vector_rom() {
     RomBuilder b;
-    const std::pair<snes::Word, snes::Word> vectors[] = {
+    const std::pair<bitforge::Word, bitforge::Word> vectors[] = {
         {0xFFE6, 0x9100}, {0xFFFE, 0x9200}, {0xFFE4, 0x9300}, {0xFFF4, 0x9400}, {0xFFFA, 0x9500}, {0xFFEA, 0x9600},
     };
     for (auto [vec, target] : vectors) {
@@ -1614,7 +1614,7 @@ static RomBuilder vector_rom() {
 }
 
 static int test_interrupt_vectors() {
-    struct Case { const char* name; Bytes code; snes::Word handler; };
+    struct Case { const char* name; Bytes code; bitforge::Word handler; };
     const Case cases[] = {
         {"emulation BRK", {0xA2, 0xFF, 0x9A, 0xF8, 0x00, 0x99}, 0x9200},
         {"native BRK", {0x18, 0xFB, 0xC2, 0x30, 0xA2, 0xFF, 0x1F, 0x9A, 0xF8, 0x00, 0x99}, 0x9100},
@@ -1629,10 +1629,10 @@ static int test_interrupt_vectors() {
         if (!run_to_stp(h)) return 1;
         auto r = h.cpu.registers();
         const bool native = c.code[0] == 0x18;
-        const snes::Address top = native ? 0x7E1FFF : 0x7E01FF;
-        const snes::Word ret = static_cast<snes::Word>(0x8000 + c.code.size());  // past the signature byte
-        const snes::Address pc_at = native ? top - 1 : top;
-        const snes::Byte pushed_p = h.bus.read(pc_at - 2);
+        const bitforge::Address top = native ? 0x7E1FFF : 0x7E01FF;
+        const bitforge::Word ret = static_cast<bitforge::Word>(0x8000 + c.code.size());  // past the signature byte
+        const bitforge::Address pc_at = native ? top - 1 : top;
+        const bitforge::Byte pushed_p = h.bus.read(pc_at - 2);
         if (expect_eq(r.pc, c.handler + 1u, "vector") ||
             expect_eq(read16(h, pc_at - 1), ret, "pushed PC") ||
             (native && expect_eq(h.bus.read(top), 0x00, "pushed PBR")) ||
@@ -1738,10 +1738,10 @@ static int test_rom_mapping() {
     rom[0x08000] = 0x11;   // LoROM $01:8000
     rom[0x11234] = 0x22;   // HiROM $C1:1234 / $41:1234
     rom[0x19234] = 0x33;   // HiROM $01:9234 / $81:9234
-    h.bus.load_test_rom(rom, snes::memory::MapMode::LoROM);
+    h.bus.load_test_rom(rom, bitforge::memory::MapMode::LoROM);
     if (expect_eq(h.bus.read(0x018000), 0x11, "LoROM $01:8000") ||
         expect_eq(h.bus.read(0x818000), 0x11, "LoROM $81:8000 mirror")) return 1;
-    h.bus.load_test_rom(rom, snes::memory::MapMode::HiROM);
+    h.bus.load_test_rom(rom, bitforge::memory::MapMode::HiROM);
     return expect_eq(h.bus.read(0xC11234), 0x22, "HiROM $C1:1234") ||
            expect_eq(h.bus.read(0x411234), 0x22, "HiROM $41:1234") ||
            expect_eq(h.bus.read(0x019234), 0x33, "HiROM $01:9234") ||
@@ -1751,11 +1751,11 @@ static int test_rom_mapping() {
 static int test_sram_mapping() {
     TestHarness h;
     Bytes rom(0x10000, 0x00);
-    h.bus.load_test_rom(rom, snes::memory::MapMode::LoROM, 0x2000);
+    h.bus.load_test_rom(rom, bitforge::memory::MapMode::LoROM, 0x2000);
     h.bus.write(0x700010, 0x77);
     if (expect_eq(h.bus.read(0x700010), 0x77, "LoROM SRAM $70:0010") ||
         expect_eq(h.bus.read(0xF00010), 0x77, "LoROM SRAM $F0:0010 mirror")) return 1;
-    h.bus.load_test_rom(rom, snes::memory::MapMode::HiROM, 0x2000);
+    h.bus.load_test_rom(rom, bitforge::memory::MapMode::HiROM, 0x2000);
     h.bus.write(0x206000, 0x88);
     return expect_eq(h.bus.read(0x206000), 0x88, "HiROM SRAM $20:6000") ||
            expect_eq(h.bus.read(0xA06000), 0x88, "HiROM SRAM $A0:6000 mirror");
@@ -1789,7 +1789,7 @@ static int test_header_detection() {
 
 static int test_cgram_full_range() {
     TestHarness h;
-    snes::ppu::PPU ppu;
+    bitforge::ppu::PPU ppu;
     h.bus.connect_ppu(&ppu);
     write_cgram(h.bus, 127, 0x1234);
     write_cgram(h.bus, 255, 0x7FFF);       // byte address $1FE: must not wrap onto color 127
@@ -1802,7 +1802,7 @@ static int test_cgram_full_range() {
 
 static int test_w12sel_keeps_tm() {
     TestHarness h;
-    snes::ppu::PPU ppu;
+    bitforge::ppu::PPU ppu;
     h.bus.connect_ppu(&ppu);
     ppu.connect_bus(&h.bus);
     write_cgram(h.bus, 1, 0x001F);
@@ -1821,7 +1821,7 @@ static int test_w12sel_keeps_tm() {
 
 // DRAM refresh: 40 master clocks per line at H = 538, charged to the CPU step that reaches it.
 static int test_dram_refresh() {
-    using snes::memory::dram_refresh_stall;
+    using bitforge::memory::dram_refresh_stall;
     int fails = 0;
     auto expect = [&](uint64_t got, uint64_t want, const char* what) {
         if (got != want) { printf("\n    %s: got %llu want %llu", what, (unsigned long long)got, (unsigned long long)want); fails++; }
@@ -1838,7 +1838,7 @@ static int test_dram_refresh() {
     // A NOP/BRA loop gets 40 fewer clocks of every 1364 once the PPU tracks the line position.
     auto run = [](bool with_ppu) {
         TestHarness h;
-        snes::ppu::PPU ppu;
+        bitforge::ppu::PPU ppu;
         if (with_ppu) { h.bus.connect_ppu(&ppu); ppu.connect_bus(&h.bus); }
         h.load_test_rom(0x8000, {0xEA, 0x80, 0xFD}, 0x8000);  // loop: NOP; BRA loop
         uint64_t clocks = 0;
@@ -1870,15 +1870,15 @@ static void ctl_expect(unsigned got, unsigned want, const char* what) {
 }
 
 // `bits` clocks of one data line (0 = D0, 1 = D1), most significant first.
-static unsigned read_bits(snes::ControllerPort& port, int bits, bool iobit = true, int line = 0) {
+static unsigned read_bits(bitforge::ControllerPort& port, int bits, bool iobit = true, int line = 0) {
     unsigned word = 0;
     for (int i = 0; i < bits; i++) word = (word << 1) | ((port.clock(iobit) >> line) & 1);
     return word;
 }
 
 static int test_controller_devices() {
-    using snes::ControllerPort;
-    using snes::Device;
+    using bitforge::ControllerPort;
+    using bitforge::Device;
     g_ctl_fails = 0;
 
     // Gamepad: 16 bits MSB first, then 1s; while latched, the live B button without shifting.
@@ -1901,7 +1901,7 @@ static int test_controller_devices() {
     // Multitap: I/O bit high -> pads 1/2 on D0/D1, low -> pads 3/4; each pair has its own shift.
     ControllerPort tap;
     tap.set_device(Device::Multitap);
-    for (int s = 0; s < 4; s++) tap.set_pad(s, static_cast<snes::Word>(0x1111 * (s + 1)));
+    for (int s = 0; s < 4; s++) tap.set_pad(s, static_cast<bitforge::Word>(0x1111 * (s + 1)));
     tap.latch(true);
     ctl_expect(tap.clock(true), 0x02, "multitap latched: D1 high (detection)");
     tap.latch(false);
@@ -1940,7 +1940,7 @@ static int test_controller_devices() {
     // without turbo, every latch with it.
     ControllerPort scope;
     scope.set_device(Device::SuperScope);
-    snes::ScopeInput aim;
+    bitforge::ScopeInput aim;
     aim.x = 10;
     aim.y = 20;
     aim.offscreen = false;
@@ -1963,10 +1963,10 @@ static int test_controller_devices() {
 }
 
 static int test_controller_bus() {
-    using snes::Device;
+    using bitforge::Device;
     g_ctl_fails = 0;
     TestHarness h;
-    snes::ppu::PPU ppu;
+    bitforge::ppu::PPU ppu;
     h.bus.connect_ppu(&ppu);
     ppu.connect_bus(&h.bus);
     h.load_test_rom(0x8000, {0xEA}, 0x8000);
@@ -1975,11 +1975,11 @@ static int test_controller_bus() {
     // the game then clears it and reads pads 4 and 5 by hand from $4017 (D0 and D1).
     h.bus.set_pad(0, 0, 0x1000);
     h.bus.set_port_device(1, Device::Multitap);
-    for (int s = 0; s < 4; s++) h.bus.set_pad(1, s, static_cast<snes::Word>(0x0100 << s));
+    for (int s = 0; s < 4; s++) h.bus.set_pad(1, s, static_cast<bitforge::Word>(0x0100 << s));
     h.bus.write(0x004201, 0x80);
     h.bus.write(0x004200, 0x01);
     h.bus.on_vblank_start();
-    auto word = [&](snes::Address lo) { return static_cast<unsigned>(h.bus.read(lo) | (h.bus.read(lo + 1) << 8)); };
+    auto word = [&](bitforge::Address lo) { return static_cast<unsigned>(h.bus.read(lo) | (h.bus.read(lo + 1) << 8)); };
     ctl_expect(word(0x004218), 0x1000, "$4218 pad 1");
     ctl_expect(word(0x00421A), 0x0100, "$421A pad 2 (multitap 1)");
     ctl_expect(word(0x00421E), 0x0200, "$421E pad 3 (multitap 2)");
@@ -1999,7 +1999,7 @@ static int test_controller_bus() {
 
     // Super Scope: the PPU counters latch where it points, only with $4201 bit 7 set.
     h.bus.set_port_device(1, Device::SuperScope);
-    snes::ScopeInput aim;
+    bitforge::ScopeInput aim;
     aim.x = 100;
     aim.y = 50;
     aim.offscreen = false;
@@ -2012,7 +2012,7 @@ static int test_controller_bus() {
     ctl_expect(h.bus.read(0x00213F) & 0x40, 0x40, "STAT78: counters latched by the scope");
     const unsigned hl = h.bus.read(0x00213C), hh = h.bus.read(0x00213C) & 1;
     const unsigned vl = h.bus.read(0x00213D), vh = h.bus.read(0x00213D) & 1;
-    ctl_expect(hl | (hh << 8), 100 + snes::kScopeDotOffset, "OPHCT = x + dot offset");
+    ctl_expect(hl | (hh << 8), 100 + bitforge::kScopeDotOffset, "OPHCT = x + dot offset");
     ctl_expect(vl | (vh << 8), 51, "OPVCT = y + 1");
     aim.offscreen = true;
     h.bus.controller(1).set_scope(aim);

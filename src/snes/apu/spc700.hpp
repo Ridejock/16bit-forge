@@ -3,7 +3,7 @@
 #include "snes/serialize.hpp"
 #include "snes/types.hpp"
 
-namespace snes::apu {
+namespace bitforge::apu {
 
 // Register snapshot, for tests and debug views.
 struct SmpRegisters {
@@ -129,4 +129,4 @@ private:
   auto execute(const Opcode& entry, Byte opcode) -> void;
 };
 
-} // namespace snes::apu
+} // namespace bitforge::apu

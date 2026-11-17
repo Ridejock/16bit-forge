@@ -27,7 +27,7 @@
 #include <array>
 #include <vector>
 
-namespace snes::coprocessor {
+namespace bitforge::coprocessor {
 
 class Cx4 final : public Coprocessor {
 public:
@@ -139,4 +139,4 @@ private:
   auto dram_index(uint32_t address) const -> uint32_t;
 };
 
-} // namespace snes::coprocessor
+} // namespace bitforge::coprocessor

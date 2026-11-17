@@ -2,7 +2,7 @@
 #pragma once
 #include <cstdint>
 
-namespace snes::frontend {
+namespace bitforge::frontend {
 
 // Frame timing (the emulation thread's schedule, and the UI loop's): one frame per frame_ns,
 // never fast-forwarding more than max_lag_frames behind (past that, resync). Times are passed in
@@ -32,4 +32,4 @@ private:
     uint64_t next_ns_ = 0;
 };
 
-} // namespace snes::frontend
+} // namespace bitforge::frontend

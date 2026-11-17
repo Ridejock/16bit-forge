@@ -8,7 +8,7 @@
 #include <string>
 #include <system_error>
 
-namespace snes::video {
+namespace bitforge::video {
 
 namespace {
 
@@ -163,4 +163,4 @@ auto create_fullscreen_pipeline(SDL_GPUDevice* device, SDL_GPUShader* vertex, SD
     return pipeline;
 }
 
-} // namespace snes::video
+} // namespace bitforge::video

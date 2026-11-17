@@ -11,7 +11,7 @@
 
 #include <vector>
 
-namespace snes::coprocessor {
+namespace bitforge::coprocessor {
 
 class OBC1 final : public Coprocessor {
 public:
@@ -49,4 +49,4 @@ private:
   }
 };
 
-} // namespace snes::coprocessor
+} // namespace bitforge::coprocessor
