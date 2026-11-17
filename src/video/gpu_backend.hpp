@@ -2,13 +2,16 @@
 #pragma once
 #include "video/video_backend.hpp"
 
+#include <array>
 #include <vector>
 
 namespace snes::video {
 
 // SDL_GPU backend (Vulkan, Direct3D 12 or Metal, whichever SDL picks): uploads each frame to a
 // texture and runs the preset's passes, each a fullscreen triangle with its own fragment shader,
-// through intermediate render targets. The last pass draws into the letterboxed viewport.
+// through intermediate render targets. The last pass draws into the letterboxed viewport. A pass
+// reads the previous pass's output, plus any extra inputs it names (the emulator frame or an
+// earlier pass's output), and gets the preset's values for its shader's parameters.
 // Device, swapchain, upload, pass-chain and screenshot code follow Emerald's Renderer,
 // Texture and PostChain (MIT, Ervin Ashley); see gpu_backend.cpp.
 class GpuBackend final : public VideoBackend {
@@ -28,6 +31,7 @@ private:
         FilterPass desc;
         SDL_GPUGraphicsPipeline* pipeline = nullptr;
         bool has_uniforms = false;
+        std::array<float, kMaxShaderParams> params{};  // FilterUniforms.Parameters
         SDL_GPUTexture* target = nullptr;  // intermediate output; null for the last pass
         Uint32 target_w = 0;
         Uint32 target_h = 0;
@@ -37,6 +41,7 @@ private:
     auto release_passes() -> void;
     auto ensure_source(Uint32 width, Uint32 height) -> bool;
     auto ensure_target(Pass& pass, Uint32 width, Uint32 height) -> bool;
+    auto input_texture(const std::string& input) const -> SDL_GPUTexture*;
     auto ensure_capture(Uint32 width, Uint32 height) -> bool;
     auto run_passes(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* output, const Viewport& viewport) -> void;
     auto finish_screenshot(SDL_GPUFence* fence, const std::string& path) -> void;

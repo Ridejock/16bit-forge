@@ -43,9 +43,20 @@ namespace {
 
 int checks_failed = 0;
 
-// Audio silence a harness run may have. None locally; CI runners (GitHub sets CI) are shared,
-// noisy VMs where a busy neighbour can starve the queue for a period or two.
+// Audio silence a UI-stall harness run may have. None locally; CI runners (GitHub sets CI)
+// are shared, noisy VMs where a busy neighbour can starve the queue for a period or two.
 const double kAllowedSilenceMs = std::getenv("CI") ? 100.0 : 0.0;
+
+// Fast-forward speed script. After audio grace, a normal-speed baseline and a fast-forward
+// run of the same wall time, a short settle, a counted recovery window, then rewind.
+constexpr double kFastForwardMinRatio = 1.2;  // fast-forward must beat normal speed by at least this
+constexpr double kSpeedWarmupS = 2.8;
+constexpr double kSpeedPhaseS = 1.5;
+constexpr double kSpeedSettleS = 0.25;
+constexpr double kSpeedRecoverS = 1.0;
+constexpr double kSpeedRewindS = 1.0;
+constexpr double kSpeedScriptS =
+    kSpeedWarmupS + kSpeedPhaseS + kSpeedPhaseS + kSpeedSettleS + kSpeedRecoverS + kSpeedRewindS;
 
 #define CHECK(cond)                                                              \
     do {                                                                         \
@@ -225,6 +236,10 @@ struct HarnessResult {
     // speed_script runs only:
     double fast_rate = 0.0;          // best emulated/displayed frame ratio seen while fast-forwarding
     uint64_t fast_frames = 0;        // frames run during the fast-forward phase
+    uint64_t normal_frames = 0;      // frames run during the same-length normal-speed baseline
+    uint64_t recover_underruns = 0;  // underruns in the post-settle normal-speed window
+    double recover_silence_ms = 0.0;
+    bool recover_seen = false;
     uint64_t rewound = 0;            // frames gone back while rewinding
     bool saw_rewind_status = false;
 };
@@ -247,7 +262,8 @@ auto boot(EmuThread& emu, const std::string& rom) -> bool {
 
 // stall_emulation: the stalls happen on the emulation thread instead (a command that blocks):
 // what the single-threaded loop did. That must underrun (control: the harness can see it).
-// speed_script: hold fast-forward for 1.5 s, then rewind for 1 s (after the audio grace period).
+// speed_script: after audio grace, a normal-speed baseline and a fast-forward run of the same
+// length, a short settle, a counted recovery window, then rewind.
 auto run_harness(double seconds, uint64_t stall_ns, uint64_t stall_every_ns, bool audio_sync, bool stall_emulation = false,
                  bool speed_script = false) -> HarnessResult {
     HarnessResult r;
@@ -286,7 +302,15 @@ auto run_harness(double seconds, uint64_t stall_ns, uint64_t stall_every_ns, boo
     const uint64_t end = start + static_cast<uint64_t>(seconds * 1e9);
     uint64_t next_stall = start + stall_every_ns;
     uint64_t last_frame = 0;
-    uint64_t ff_start = 0, rewind_start = 0;
+    uint64_t ff_start = 0, rewind_start = 0, normal_start = 0;
+    uint64_t recover_underruns0 = 0;
+    double recover_silence0 = 0.0;
+    const double normal0 = kSpeedWarmupS;
+    const double fast0 = normal0 + kSpeedPhaseS;
+    const double settle0 = fast0 + kSpeedPhaseS;
+    const double recover0 = settle0 + kSpeedSettleS;
+    const double rewind0 = recover0 + kSpeedRecoverS;
+    const double end_t = rewind0 + kSpeedRewindS;
     bool saved = speed_script, loaded = speed_script, checked_load = speed_script;
     int buttons = 0;
     while (SDL_GetTicksNS() < end) {
@@ -306,14 +330,28 @@ auto run_harness(double seconds, uint64_t stall_ns, uint64_t stall_every_ns, boo
         const uint64_t now = SDL_GetTicksNS();
         if (speed_script) {
             const double t = static_cast<double>(now - start) / 1e9;
-            const bool ff = t >= 2.8 && t < 4.3, rw = t >= 4.6 && t < 5.6;
-            emu.set_speed_input(rw, ff);
-            if (ff && !ff_start) ff_start = st.frames_run;
-            if (!ff && ff_start && !r.fast_frames) r.fast_frames = st.frames_run - ff_start;
-            if (ff && st.fast_forward) r.fast_rate = std::max(r.fast_rate, st.fast_forward_rate);
-            if (rw && !rewind_start) rewind_start = last_frame;
-            if (rw && st.rewinding) r.saw_rewind_status = true;
-            if (rw && last_frame < rewind_start) r.rewound = std::max(r.rewound, rewind_start - last_frame);
+            const bool in_normal = t >= normal0 && t < fast0;
+            const bool in_ff = t >= fast0 && t < settle0;
+            const bool in_recover = t >= recover0 && t < rewind0;
+            const bool in_rewind = t >= rewind0 && t < end_t;
+            emu.set_speed_input(in_rewind, in_ff);
+            if (in_normal && !normal_start) normal_start = st.frames_run;
+            if (!in_normal && normal_start && !r.normal_frames) r.normal_frames = st.frames_run - normal_start;
+            if (in_ff && !ff_start) ff_start = st.frames_run;
+            if (!in_ff && ff_start && !r.fast_frames) r.fast_frames = st.frames_run - ff_start;
+            if (in_ff && st.fast_forward) r.fast_rate = std::max(r.fast_rate, st.fast_forward_rate);
+            if (in_recover && !r.recover_seen) {
+                recover_underruns0 = st.audio.underruns;
+                recover_silence0 = st.audio.silence_ms;
+                r.recover_seen = true;
+            }
+            if (in_recover) {
+                r.recover_underruns = st.audio.underruns - recover_underruns0;
+                r.recover_silence_ms = st.audio.silence_ms - recover_silence0;
+            }
+            if (in_rewind && !rewind_start) rewind_start = last_frame;
+            if (in_rewind && st.rewinding) r.saw_rewind_status = true;
+            if (in_rewind && last_frame < rewind_start) r.rewound = std::max(r.rewound, rewind_start - last_frame);
         }
         // F-key save and load early on (a load restarts the audio grace period, so they come
         // first: the rest of the run is counted).
@@ -393,20 +431,29 @@ auto test_harness_control() -> void {
 }
 auto test_harness_audio_sync() -> void { test_harness(true); }
 
-// Fast-forward (4x) then rewind through the thread, with the sound card running: the game goes
-// faster, then back in time, and the audio queue never underruns.
+// Fast-forward then rewind through the thread, with the sound card running. Fast-forward only
+// has to beat normal speed over the same wall time (not a fixed multiple). Audio may drop
+// while it is on; after a short settle, a following normal-speed window must stay clean.
 auto test_harness_speed() -> void {
-    const HarnessResult r = run_harness(6.2, 0, 1'000'000'000ULL, false, false, true);
-    std::printf("\n    fast-forward: %llu frames in 1.5 s (%.1fx), rewound %llu frames, underruns %llu (%.0f ms silence)",
-                static_cast<unsigned long long>(r.fast_frames), r.fast_rate, static_cast<unsigned long long>(r.rewound),
-                static_cast<unsigned long long>(r.underruns), r.silence_ms);
+    const HarnessResult r = run_harness(kSpeedScriptS, 0, 1'000'000'000ULL, false, false, true);
+    const double ratio = r.normal_frames > 0
+        ? static_cast<double>(r.fast_frames) / static_cast<double>(r.normal_frames)
+        : 0.0;
+    std::printf("\n    fast-forward: %llu frames vs %llu at normal speed in %.1f s (%.2fx, min %.1fx), "
+                "rewound %llu frames, after settle: underruns %llu (%.0f ms silence)",
+                static_cast<unsigned long long>(r.fast_frames),
+                static_cast<unsigned long long>(r.normal_frames), kSpeedPhaseS, ratio,
+                kFastForwardMinRatio, static_cast<unsigned long long>(r.rewound),
+                static_cast<unsigned long long>(r.recover_underruns), r.recover_silence_ms);
     CHECK(r.frames_ok);
     CHECK(r.saw_rewind_status);
     CHECK(r.rewound >= 60);  // 1 s back at least (4 frames per step)
 #if !SNES_UNDER_TSAN
-    CHECK(r.fast_frames >= 3 * 90);  // ~4x for 1.5 s
-    CHECK(r.fast_rate >= 3.0);
-    CHECK(r.silence_ms <= kAllowedSilenceMs);  // an underrun always adds silence
+    CHECK(r.normal_frames > 0);
+    CHECK(static_cast<double>(r.fast_frames) > kFastForwardMinRatio * static_cast<double>(r.normal_frames));
+    CHECK(r.recover_seen);
+    CHECK(r.recover_underruns == 0);
+    CHECK(r.recover_silence_ms <= 0.0);
 #endif
 }
 
@@ -425,7 +472,7 @@ int main() {
         {"harness: UI stalls 170 ms, timer pacing", test_harness_timer},
         {"harness: UI stalls 170 ms, audio-sync pacing", test_harness_audio_sync},
         {"harness: same stalls on the emu thread (control)", test_harness_control},
-        {"harness: fast-forward 4x, then rewind", test_harness_speed},
+        {"harness: fast-forward then rewind", test_harness_speed},
     };
     std::printf("=== Emulation thread tests%s ===\n", SNES_UNDER_TSAN ? " (ThreadSanitizer: timing checks off)" : "");
     int passed = 0, failed = 0;

@@ -10,6 +10,8 @@ licenses are reproduced as they require.
 | ... inside SDL: HIDAPI | part of the SDL build (gamepads) | BSD-3-Clause (chosen from HIDAPI's license options) |
 | [Dear ImGui](https://github.com/ocornut/imgui) v1.93.0 | statically linked into the program | MIT |
 | Hyllian's xBR-lv2 shader | ported to HLSL in `shaders/xbr_lv2.frag.hlsl` | MIT |
+| ScaleFX (Sp00kyFox) | ported to HLSL in `shaders/scalefx_pass0.frag.hlsl` ... `scalefx_pass4.frag.hlsl` | MIT |
+| CRT shader by Timothy Lottes | ported to HLSL in `shaders/crt_lottes.frag.hlsl` (its curvature replaced by our own) | public domain |
 | [gilyon/snes-tests](https://github.com/gilyon/snes-tests) | SPC700 test vectors in `tests/apu_tests.cpp` (tests only, not in the program) | MIT |
 | [SDL_shadercross](https://github.com/libsdl-org/SDL_shadercross), DirectXShaderCompiler, SPIRV-Cross, SPIRV-Tools | build-time tool only; nothing from them is shipped | zlib / University of Illinois NCSA / Apache-2.0 |
 | Emerald engine (Ervin Ashley) | `cmake/Shaders.cmake`, `tools/shadercross/`, parts of the shaders and the GPU backend | MIT, same author |
@@ -21,6 +23,12 @@ public documentation credited in README.md.
 The 64-byte SPC700 boot ROM (IPL) in `src/snes/apu/ipl_rom.hpp` is a dump of the sound chip's
 mask ROM (Sony). It is included for compatibility, as in other SNES emulators, and is not
 covered by the MIT license.
+
+The NTSC composite / S-Video filter (`shaders/ntsc.frag.hlsl`), the screen curvature and
+rounded corners in `shaders/crt_lottes.frag.hlsl`, and the filter chain itself are original
+code (MIT), written from the published NTSC signal math and SNES video timing. No code from
+other NTSC, CRT-geometry or pixel-art filters is used; in particular nothing from blargg's
+snes_ntsc (LGPL), crt-geom, GTU or OmniScale (GPL).
 
 No game ROMs and no coprocessor firmware are included.
 
@@ -164,6 +172,55 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 Incorporates some of the ideas from SABR shader. Thanks to Joshua Street.
+```
+
+## ScaleFX (MIT)
+
+From libretro slang-shaders, `edge-smoothing/scalefx/shaders/scalefx-pass0.slang` to
+`scalefx-pass4.slang` (each pass carries the same notice):
+
+```
+ScaleFX
+by Sp00kyFox, 2017-03-01
+
+Copyright (c) 2016 Sp00kyFox - ScaleFX@web.de
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
+## CRT shader by Timothy Lottes (public domain)
+
+From libretro slang-shaders, `crt/shaders/crt-lottes.slang`. No license terms; its notice:
+
+```
+PUBLIC DOMAIN CRT STYLED SCAN-LINE SHADER
+
+  by Timothy Lottes
+
+This is more along the style of a really good CGA arcade monitor.
+With RGB inputs instead of NTSC.
+The shadow mask example has the mask rotated 90 degrees for less chromatic aberration.
+
+Left it unoptimized to show the theory behind the algorithm.
+
+It is an example what I personally would want as a display option for pixel art games.
+Please take and use, change, or whatever.
 ```
 
 ## gilyon/snes-tests (MIT)

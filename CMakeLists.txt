@@ -121,11 +121,22 @@ target_link_libraries(snes_emulator PRIVATE snes_core SDL3::SDL3-static imgui Th
 include(cmake/Shaders.cmake)
 file(GLOB SNES_SHADERS CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/shaders/*.hlsl)
 emerald_add_shaders(snes_emulator ${SNES_SHADERS})
-add_custom_command(TARGET snes_emulator POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/shaders/presets.ini
-            $<TARGET_FILE_DIR:snes_emulator>/shaders/presets.ini
-    COMMENT "Copying shaders/presets.ini next to snes_emulator"
-)
+# A shader's tunables are its "// @param <name> <default>" lines; they go to shaders/<name>.params
+# (name and default, in uniform slot order) for presets.ini's "param =" lines. Editing a shader
+# re-runs CMake so the list stays current.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${SNES_SHADERS})
+foreach(shader ${SNES_SHADERS})
+    file(STRINGS ${shader} param_lines REGEX "^// @param ")
+    if(param_lines)
+        list(TRANSFORM param_lines REPLACE "^// @param +([A-Za-z0-9_]+) +([-+.0-9eE]+).*$" "\\1 \\2")
+        list(JOIN param_lines "\n" params)
+        get_filename_component(name ${shader} NAME_WE)
+        file(GENERATE OUTPUT $<TARGET_FILE_DIR:snes_emulator>/shaders/${name}.params CONTENT "${params}\n")
+    endif()
+endforeach()
+# presets.ini is copied the same way, so editing it alone is enough to update the build.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/shaders/presets.ini)
+file(GENERATE OUTPUT $<TARGET_FILE_DIR:snes_emulator>/shaders/presets.ini INPUT ${CMAKE_SOURCE_DIR}/shaders/presets.ini)
 
 # The ROM library scans a roms/ folder next to the executable; put your own ROMs there.
 
@@ -171,6 +182,12 @@ add_executable(input_tests tests/input_tests.cpp src/frontend/input.cpp src/fron
 target_include_directories(input_tests PRIVATE src)
 target_link_libraries(input_tests PRIVATE snes_core SDL3::SDL3-static)
 
+# Filter presets: the presets.ini parser and the shipped presets against their shaders. Headless.
+add_executable(filter_tests tests/filter_tests.cpp src/video/filter_preset.cpp)
+target_include_directories(filter_tests PRIVATE src)
+target_link_libraries(filter_tests PRIVATE snes_core)
+target_compile_definitions(filter_tests PRIVATE SNES_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
 # Frame pacing (header-only logic, virtual time).
 add_executable(pacer_tests tests/pacer_tests.cpp)
 target_include_directories(pacer_tests PRIVATE src)
@@ -187,7 +204,7 @@ target_link_libraries(thread_tests PRIVATE snes_core SDL3::SDL3-static Threads::
 add_executable(audio_dump tools/audio_dump.cpp)
 target_link_libraries(audio_dump PRIVATE snes_core)
 
-foreach(target snes_emulator snes_core cpu_tests ppu_tests apu_tests state_tests chip_tests input_tests audio_sync_tests pacer_tests thread_tests audio_dump)
+foreach(target snes_emulator snes_core cpu_tests ppu_tests apu_tests state_tests chip_tests input_tests filter_tests audio_sync_tests pacer_tests thread_tests audio_dump)
     if(MSVC)
         target_compile_options(${target} PRIVATE /W4)
         target_compile_definitions(${target} PRIVATE _CRT_SECURE_NO_WARNINGS)  # fopen/getenv are fine here
@@ -198,7 +215,7 @@ endforeach()
 
 # ---- tests: ctest runs every suite headless (no window, no audio device, no ROM files) ----
 enable_testing()
-foreach(suite cpu_tests ppu_tests apu_tests state_tests chip_tests audio_sync_tests input_tests pacer_tests thread_tests)
+foreach(suite cpu_tests ppu_tests apu_tests state_tests chip_tests audio_sync_tests input_tests filter_tests pacer_tests thread_tests)
     add_test(NAME ${suite} COMMAND ${suite})
     set_tests_properties(${suite} PROPERTIES TIMEOUT 900 ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy")
 endforeach()

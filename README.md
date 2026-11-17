@@ -23,7 +23,8 @@ are emulated at the instruction level rather than with game-specific hacks.
   - battery saves and real-time-clock saves, written automatically
   - cheats: Game Genie, Pro Action Replay and raw address codes
   - GPU renderer (Vulkan / Direct3D 12 / Metal through SDL_GPU) with filter shaders:
-    nearest, sharp-bilinear, xBR, CRT scanlines (presets in `shaders/presets.ini`);
+    nearest, sharp-bilinear, xBR, ScaleFX, CRT scanlines, CRT-Lottes (optional curvature),
+    NTSC composite and S-Video signal simulation into a CRT (presets in `shaders/presets.ini`);
     an SDL_Renderer fallback for older systems
   - integer scaling, 8:7 aspect, fullscreen game window
   - audio sync or video sync, volume and MSU-1 volume, WAV recording

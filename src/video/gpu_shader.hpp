@@ -5,8 +5,11 @@
 // src/Renderer/Pipeline.cpp, at Emerald commit 2952e05. Emerald's wrapper types (GpuDevice,
 // GpuShader, ...) are replaced by the SDL types and its logger by utils::Logger; the loading
 // rules, file layout and reflection handling are unchanged.
+#include "video/filter_preset.hpp"
+
 #include <SDL3/SDL.h>
 #include <string_view>
+#include <vector>
 
 namespace snes::video {
 
@@ -18,6 +21,11 @@ namespace snes::video {
 
 // How many uniform buffers the reflection file of shaders/<name> lists (0 if unknown).
 [[nodiscard]] auto shader_uniform_buffers(std::string_view name) -> unsigned;
+// How many samplers (texture inputs) the reflection file of shaders/<name> lists (0 if unknown).
+[[nodiscard]] auto shader_samplers(std::string_view name) -> unsigned;
+
+// The parameters in shaders/<shader>.params (see parse_shader_params); empty if there is none.
+[[nodiscard]] auto load_shader_params(std::string_view shader) -> std::vector<FilterParam>;
 
 // A pipeline for one fullscreen-triangle pass: no vertex buffers, no blending, no culling,
 // one color target of `format`. Null on failure (logged).

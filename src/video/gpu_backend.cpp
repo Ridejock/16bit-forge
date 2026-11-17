@@ -30,6 +30,8 @@ constexpr const char* kFragmentSuffix = ".frag";
 // Emulator frames are XRGB8888 in memory order B, G, R, X.
 constexpr SDL_GPUTextureFormat kSourceFormat = SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM;
 constexpr SDL_GPUTextureFormat kIntermediateFormat = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+constexpr SDL_GPUTextureFormat kFloatFormat = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;  // "float" passes
+constexpr size_t kMaxPassInputs = 8;  // the previous pass plus extra inputs
 constexpr Uint32 kBytesPerPixel = 4;
 constexpr Uint32 kMaxTargetSide = 16384;  // SDL_GPU's guaranteed limit on every backend
 
@@ -40,6 +42,7 @@ struct FilterUniforms {
     float original_size[4];
     Uint32 frame_count;
     Uint32 padding[3];
+    float parameters[kMaxShaderParams];
 };
 
 auto size_vec(Uint32 w, Uint32 h, float (&out)[4]) -> void {
@@ -183,16 +186,35 @@ auto GpuBackend::build_passes(const FilterPreset& preset) -> bool {
     SDL_WaitForGPUIdle(device_);
     release_passes();
     bool ok = !preset.passes.empty();
+    std::vector<std::string> declared;  // every parameter the preset's shaders take
     for (size_t i = 0; ok && i < preset.passes.size(); i++) {
         Pass pass;
         pass.desc = preset.passes[i];
         const std::string name = pass.desc.shader + kFragmentSuffix;
+        // The shader must read exactly the inputs the preset gives it: the previous pass + extras.
+        const size_t inputs = 1 + pass.desc.inputs.size();
+        if (inputs > kMaxPassInputs || shader_samplers(name) != inputs) {
+            utils::Logger::error(utils::LogChannel::Video, "Filter '%s': shader %s does not take %zu input%s",
+                                 preset.name.c_str(), pass.desc.shader.c_str(), inputs, inputs == 1 ? "" : "s");
+            ok = false;
+            continue;  // ends the loop
+        }
+        // Parameters: the shader's defaults, overridden by the preset's values.
+        const auto params = load_shader_params(pass.desc.shader);
+        for (size_t p = 0; p < params.size(); p++) {
+            declared.push_back(params[p].name);
+            pass.params[p] = params[p].value;
+            for (const FilterParam& set : preset.params) {
+                if (set.name == params[p].name) pass.params[p] = set.value;
+            }
+        }
         SDL_GPUShader* fragment = load_shader(device_, name);
         if (fragment) {
             // The last pass draws into the swapchain (or the same-format capture texture).
             const bool last = i + 1 == preset.passes.size();
-            pass.pipeline = create_fullscreen_pipeline(device_, vertex_shader_, fragment,
-                                                       last ? swapchain_format_ : kIntermediateFormat);
+            const SDL_GPUTextureFormat format = last ? swapchain_format_
+                                                     : (pass.desc.float_target ? kFloatFormat : kIntermediateFormat);
+            pass.pipeline = create_fullscreen_pipeline(device_, vertex_shader_, fragment, format);
             pass.has_uniforms = shader_uniform_buffers(name) > 0;
             SDL_ReleaseGPUShader(device_, fragment);  // the pipeline keeps what it needs
         }
@@ -202,6 +224,12 @@ auto GpuBackend::build_passes(const FilterPreset& preset) -> bool {
     if (!ok) {
         utils::Logger::error(utils::LogChannel::Video, "Filter '%s' could not be built", preset.name.c_str());
         release_passes();
+    }
+    for (const FilterParam& set : preset.params) {  // most likely a typo in presets.ini
+        if (ok && std::find(declared.begin(), declared.end(), set.name) == declared.end()) {
+            utils::Logger::warning(utils::LogChannel::Video, "Filter '%s': no pass takes parameter '%s'", preset.name.c_str(),
+                                   set.name.c_str());
+        }
     }
     return ok;
 }
@@ -256,11 +284,20 @@ auto GpuBackend::upload_frame(const uint32_t* pixels, int width, int height, int
 auto GpuBackend::ensure_target(Pass& pass, Uint32 width, Uint32 height) -> bool {
     if (pass.target && pass.target_w == width && pass.target_h == height) return true;
     if (pass.target) SDL_ReleaseGPUTexture(device_, pass.target);  // deferred by SDL until unused
-    pass.target = create_texture(device_, kIntermediateFormat,
+    pass.target = create_texture(device_, pass.desc.float_target ? kFloatFormat : kIntermediateFormat,
                                  SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER, width, height);
     pass.target_w = width;
     pass.target_h = height;
     return pass.target != nullptr;
+}
+
+// An extra pass input: the emulator frame, or the output of the earlier pass with that name.
+auto GpuBackend::input_texture(const std::string& input) const -> SDL_GPUTexture* {
+    if (input == kOriginalInput) return source_;
+    for (const Pass& pass : passes_) {
+        if (pass.desc.name == input) return pass.target;
+    }
+    return nullptr;  // not reached: parse_presets only accepts earlier passes' names
 }
 
 auto GpuBackend::ensure_capture(Uint32 width, Uint32 height) -> bool {
@@ -291,8 +328,8 @@ auto GpuBackend::run_passes(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* output, c
         Uint32 out_h = view_h;
         if (!last) {
             const bool by_source = pass.desc.scale_type == ScaleType::Source;
-            out_w = scaled(by_source ? in_w : view_w, pass.desc.scale);
-            out_h = scaled(by_source ? in_h : view_h, pass.desc.scale);
+            out_w = scaled(by_source ? in_w : view_w, pass.desc.scale_x);
+            out_h = scaled(by_source ? in_h : view_h, pass.desc.scale_y);
             if (!ensure_target(pass, out_w, out_h)) {
                 utils::Logger::error(utils::LogChannel::Video, "GpuBackend: could not create a %ux%u pass target", out_w, out_h);
                 return;
@@ -311,14 +348,19 @@ auto GpuBackend::run_passes(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* output, c
                                      static_cast<float>(viewport.w), static_cast<float>(viewport.h), 0.0f, 1.0f};
             SDL_SetGPUViewport(render, &vp);
         }
-        const SDL_GPUTextureSamplerBinding binding{input, pass.desc.filter == FilterMode::Linear ? linear_ : nearest_};
-        SDL_BindGPUFragmentSamplers(render, 0, &binding, 1);
+        // Slot 0: the previous pass (or the frame); then the extra inputs, all with the pass's filter.
+        SDL_GPUSampler* sampler = pass.desc.filter == FilterMode::Linear ? linear_ : nearest_;
+        SDL_GPUTextureSamplerBinding bindings[kMaxPassInputs]{{input, sampler}};
+        const size_t inputs = 1 + pass.desc.inputs.size();
+        for (size_t k = 1; k < inputs; k++) bindings[k] = {input_texture(pass.desc.inputs[k - 1]), sampler};
+        SDL_BindGPUFragmentSamplers(render, 0, bindings, static_cast<Uint32>(inputs));
         if (pass.has_uniforms) {
             FilterUniforms uniforms{};
             size_vec(in_w, in_h, uniforms.source_size);
             size_vec(out_w, out_h, uniforms.output_size);
             size_vec(source_w_, source_h_, uniforms.original_size);
             uniforms.frame_count = frame_count_;
+            std::copy(pass.params.begin(), pass.params.end(), uniforms.parameters);
             SDL_PushGPUFragmentUniformData(cmd, 0, &uniforms, static_cast<Uint32>(sizeof(uniforms)));
         }
         SDL_DrawGPUPrimitives(render, 3, 1, 0, 0);

@@ -77,6 +77,22 @@ auto shader_uniform_buffers(std::string_view name) -> unsigned {
     return counts.uniform_buffers;
 }
 
+auto shader_samplers(std::string_view name) -> unsigned {
+    ResourceCounts counts;
+    read_reflection(name, counts);
+    return counts.samplers;
+}
+
+auto load_shader_params(std::string_view shader) -> std::vector<FilterParam> {
+    const std::string path = base_path(shader) + ".params";
+    size_t size = 0;
+    void* data = SDL_LoadFile(path.c_str(), &size);  // most shaders have none
+    if (!data) return {};
+    auto params = parse_shader_params(std::string_view(static_cast<const char*>(data), size));
+    SDL_free(data);
+    return params;
+}
+
 auto load_shader(SDL_GPUDevice* device, std::string_view name) -> SDL_GPUShader* {
     SDL_GPUShaderStage stage;
     if (name.ends_with(".vert")) {
