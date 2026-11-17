@@ -1317,20 +1317,25 @@ static int test_log_channels() {
     Logger::set_paused(LogSink::Emulation, false);
 
     // A 2 KB cap: the file rotates to emu_trace_test.1.log and starts again.
+    // error_code overloads throughout: a missing file is a failed check, not an abort.
+    std::error_code ec;
     const auto dir = std::filesystem::temp_directory_path() / "snes_log_test";
-    std::filesystem::remove_all(dir);
+    std::filesystem::remove_all(dir, ec);
     const std::string path = (dir / "emu_trace_test.log").string();
     expect(Logger::set_file(LogSink::Emulation, path, 2048), "open log file");
     for (int i = 0; i < 100; i++) DMA_TRACE("DMA line %d with some padding to fill the file faster", i);
     Logger::set_file(LogSink::Emulation, {}, 0);
-    const auto rotated = dir / "emu_trace_test.1.log";
-    expect(std::filesystem::exists(rotated) && std::filesystem::file_size(rotated) >= 2048, "rotated file");
-    expect(std::filesystem::file_size(path) < 2048, "current file under the cap");
-    std::ifstream last(path);
+    const auto size_of = [&ec](const std::filesystem::path& p) { const auto n = std::filesystem::file_size(p, ec); return ec ? 0 : n; };
+    expect(size_of(dir / "emu_trace_test.1.log") >= 2048, "rotated file");
+    const auto current = size_of(path);
+    expect(current > 0 && current < 2048, "current file under the cap");
     std::string line, final_line;
-    while (std::getline(last, line)) final_line = line;
+    {
+        std::ifstream last(path);  // closed before the folder goes: Windows can't delete an open file
+        while (std::getline(last, line)) final_line = line;
+    }
     expect(final_line.find("[DMA] [TRACE] DMA line 99") != std::string::npos, "file line format");
-    std::filesystem::remove_all(dir);
+    std::filesystem::remove_all(dir, ec);
 
     Logger::set_level(LogLevel::Info);
     Logger::clear(LogSink::System);

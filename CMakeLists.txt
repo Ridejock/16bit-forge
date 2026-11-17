@@ -190,6 +190,7 @@ target_link_libraries(audio_dump PRIVATE snes_core)
 foreach(target snes_emulator snes_core cpu_tests ppu_tests apu_tests state_tests chip_tests input_tests audio_sync_tests pacer_tests thread_tests audio_dump)
     if(MSVC)
         target_compile_options(${target} PRIVATE /W4)
+        target_compile_definitions(${target} PRIVATE _CRT_SECURE_NO_WARNINGS)  # fopen/getenv are fine here
     else()
         target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Wshadow)
     endif()

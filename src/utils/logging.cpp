@@ -88,13 +88,14 @@ auto write_file(Sink& s, const Line& line) -> void {
   if (line.level >= LogLevel::Warning) std::fflush(s.file);
   if (s.max_bytes == 0 || s.written < s.max_bytes) return;
 
-  // Cap reached: keep one previous file and start over.
+  // Cap reached: keep one previous file and start over. Closed first: Windows can't rename an
+  // open file.
   std::fclose(s.file);
   std::error_code ec;
   const auto old = rotated_path(s.path);
   std::filesystem::remove(old, ec);
   std::filesystem::rename(s.path, old, ec);
-  s.file = std::fopen(s.path.c_str(), "w");
+  s.file = std::fopen(s.path.c_str(), "wb");
   s.written = 0;
 }
 
@@ -112,7 +113,7 @@ auto Logger::set_file(LogSink id, const std::string& path, std::size_t max_bytes
   std::error_code ec;
   const std::filesystem::path p(path);
   if (p.has_parent_path()) std::filesystem::create_directories(p.parent_path(), ec);
-  s.file = std::fopen(path.c_str(), "w");
+  s.file = std::fopen(path.c_str(), "wb");  // binary: `written` matches the file size (no \r on Windows)
   if (!s.file) s.path.clear();
   return s.file != nullptr;
 }
