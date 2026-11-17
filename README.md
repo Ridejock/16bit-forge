@@ -1,4 +1,4 @@
-# snes_emulator
+# 16bit-forge 
 
 A Super Nintendo / Super Famicom emulator written in C++20, with a Dear ImGui frontend on SDL3.
 It aims for accuracy first: the CPU, PPU and APU are cycle-based, and the enhancement chips
