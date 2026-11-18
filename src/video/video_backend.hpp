@@ -20,6 +20,13 @@ struct Viewport {
     int h = 0;
 };
 
+// Where the overlay image (see VideoBackend::upload_overlay) goes, in window pixels, and how
+// opaque it is. Its size is a whole multiple of the image's, so nearest sampling keeps it crisp.
+struct OverlayPlacement {
+    Viewport rect;
+    float opacity = 0.0f;  // 0 = not drawn
+};
+
 enum class BackendKind { Gpu, Renderer };
 
 // "gpu" / "sdl": the names used in the ini file and on the command line.
@@ -42,8 +49,13 @@ public:
 
     // Copies the frame for the next present(). `pitch` is in bytes. Null clears the picture.
     virtual auto upload_frame(const uint32_t* pixels, int width, int height, int pitch) -> void = 0;
-    // Draws the last frame into `viewport` (letterboxed in black) and shows it.
-    virtual auto present(const Viewport& viewport) -> void = 0;
+    // Copies an overlay image (ARGB8888, straight alpha, tightly packed) for later present()s,
+    // e.g. on-screen messages. It is drawn over the picture after the filter, so no filter
+    // touches it. Null drops it.
+    virtual auto upload_overlay(const uint32_t* pixels, int width, int height) -> void = 0;
+    // Draws the last frame into `viewport` (letterboxed in black), then the overlay at
+    // `overlay`, and shows it.
+    virtual auto present(const Viewport& viewport, const OverlayPlacement& overlay) -> void = 0;
     // Applies a filter preset. False if it could not (the backend then shows plain nearest).
     virtual auto set_filter(const FilterPreset& preset) -> bool = 0;
 
@@ -51,7 +63,8 @@ public:
     // For the status bar, e.g. "SDL_GPU (vulkan)".
     virtual auto description() const -> std::string = 0;
 
-    // The next present() also writes what it shows (the whole window) to `path` as a BMP.
+    // The next present() also writes what it shows (the whole window, overlay included) to
+    // `path` as a BMP.
     auto request_screenshot(std::string path) -> void { screenshot_path_ = std::move(path); }
 
 protected:

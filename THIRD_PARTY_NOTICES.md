@@ -11,6 +11,7 @@ licenses are reproduced as they require.
 | [Dear ImGui](https://github.com/ocornut/imgui) v1.93.0 | statically linked into the program | MIT |
 | Hyllian's xBR-lv2 shader | ported to HLSL in `shaders/xbr_lv2.frag.hlsl` | MIT |
 | ScaleFX (Sp00kyFox) | ported to HLSL in `shaders/scalefx_pass0.frag.hlsl` ... `scalefx_pass4.frag.hlsl` | MIT |
+| [font8x8](https://github.com/dhepper/font8x8) (Daniel Hepper, from Marcel Sondaar's font8x8 / IBM VGA fonts) | 8x8 glyphs for on-screen messages in `src/frontend/font8x8.hpp` | public domain |
 | CRT shader by Timothy Lottes | ported to HLSL in `shaders/crt_lottes.frag.hlsl` (its curvature replaced by our own) | public domain |
 | [gilyon/snes-tests](https://github.com/gilyon/snes-tests) | SPC700 test vectors in `tests/apu_tests.cpp` (tests only, not in the program) | MIT |
 | [SDL_shadercross](https://github.com/libsdl-org/SDL_shadercross), DirectXShaderCompiler, SPIRV-Cross, SPIRV-Tools | build-time tool only; nothing from them is shipped | zlib / University of Illinois NCSA / Apache-2.0 |

@@ -143,9 +143,19 @@ auto load_shader(SDL_GPUDevice* device, std::string_view name) -> SDL_GPUShader*
 }
 
 auto create_fullscreen_pipeline(SDL_GPUDevice* device, SDL_GPUShader* vertex, SDL_GPUShader* fragment,
-                                SDL_GPUTextureFormat format) -> SDL_GPUGraphicsPipeline* {
+                                SDL_GPUTextureFormat format, bool alpha_blend) -> SDL_GPUGraphicsPipeline* {
     SDL_GPUColorTargetDescription color_target{};
     color_target.format = format;
+    if (alpha_blend) {
+        SDL_GPUColorTargetBlendState& blend = color_target.blend_state;
+        blend.enable_blend = true;
+        blend.src_color_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA;
+        blend.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        blend.color_blend_op = SDL_GPU_BLENDOP_ADD;
+        blend.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        blend.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        blend.alpha_blend_op = SDL_GPU_BLENDOP_ADD;
+    }
 
     SDL_GPUGraphicsPipelineCreateInfo info{};
     info.vertex_shader = vertex;

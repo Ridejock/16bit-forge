@@ -102,6 +102,8 @@ auto Settings::load(const std::string& path) -> void {
                 aspect_8_7 = parse_bool(value);
             } else if (key == "show_log") {
                 show_log = parse_bool(value);
+            } else if (key == "show_messages") {
+                show_messages = parse_bool(value);
             }
         } else if (section == "video") {
             if (key == "renderer") {
@@ -189,7 +191,8 @@ auto Settings::save(const std::string& path) const -> bool {
         << "scale=" << scale << "\n"
         << "integer_scaling=" << (integer_scaling ? 1 : 0) << "\n"
         << "aspect_8_7=" << (aspect_8_7 ? 1 : 0) << "\n"
-        << "show_log=" << (show_log ? 1 : 0) << "\n\n";
+        << "show_log=" << (show_log ? 1 : 0) << "\n"
+        << "show_messages=" << (show_messages ? 1 : 0) << "\n\n";
 
     out << "[video]\n"
         << "renderer=" << video::backend_kind_name(renderer) << "\n"

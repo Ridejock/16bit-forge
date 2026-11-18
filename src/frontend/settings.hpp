@@ -20,6 +20,7 @@ struct Settings {
     bool integer_scaling = true;
     bool aspect_8_7 = false;
     bool show_log = true;
+    bool show_messages = true;  // on-screen messages in the game window (save/load state)
     video::BackendKind renderer = video::BackendKind::Gpu;  // falls back to SDL_Renderer if GPU fails
     std::string filter = "nearest";                         // a preset name from shaders/presets.ini
     int volume = 100;                                       // percent, 0-100

@@ -27,9 +27,11 @@ namespace bitforge::video {
 // The parameters in shaders/<shader>.params (see parse_shader_params); empty if there is none.
 [[nodiscard]] auto load_shader_params(std::string_view shader) -> std::vector<FilterParam>;
 
-// A pipeline for one fullscreen-triangle pass: no vertex buffers, no blending, no culling,
-// one color target of `format`. Null on failure (logged).
+// A pipeline for one fullscreen-triangle pass: no vertex buffers, no culling, one color target
+// of `format`. No blending unless `alpha_blend` (straight alpha over what's there, for the
+// overlay). Null on failure (logged).
 [[nodiscard]] auto create_fullscreen_pipeline(SDL_GPUDevice* device, SDL_GPUShader* vertex, SDL_GPUShader* fragment,
-                                              SDL_GPUTextureFormat format) -> SDL_GPUGraphicsPipeline*;
+                                              SDL_GPUTextureFormat format, bool alpha_blend = false)
+    -> SDL_GPUGraphicsPipeline*;
 
 } // namespace bitforge::video

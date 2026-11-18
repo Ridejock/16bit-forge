@@ -13,7 +13,8 @@ public:
     auto create(SDL_Window* window) -> bool override;
     auto destroy() -> void override;
     auto upload_frame(const uint32_t* pixels, int width, int height, int pitch) -> void override;
-    auto present(const Viewport& viewport) -> void override;
+    auto upload_overlay(const uint32_t* pixels, int width, int height) -> void override;
+    auto present(const Viewport& viewport, const OverlayPlacement& overlay) -> void override;
     auto set_filter(const FilterPreset& preset) -> bool override;
     auto kind() const -> BackendKind override { return BackendKind::Renderer; }
     auto description() const -> std::string override;
@@ -23,6 +24,7 @@ private:
 
     SDL_Renderer* renderer_ = nullptr;
     SDL_Texture* texture_ = nullptr;
+    SDL_Texture* overlay_ = nullptr;  // on-screen messages, alpha-blended
     int tex_width_ = 0;
     int tex_height_ = 0;
     bool has_frame_ = false;

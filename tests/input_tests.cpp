@@ -375,11 +375,13 @@ auto test_settings_round_trip() -> void {
     out.pointer.mouse_speed = 150;
     out.pointer.crosshair = false;
     out.ports[4].device = std::string(kNoDevice);
+    out.show_messages = false;
     CHECK(out.save(path));
     Settings in;
     in.load(path);
     std::filesystem::remove(path);
     CHECK(in.port_devices == out.port_devices);
+    CHECK(!in.show_messages);
     CHECK(in.pointer.mouse_speed == 150 && !in.pointer.crosshair);
     CHECK(in.ports[4].device == kNoDevice && in.ports[3].device == kAutoDevice);
     CHECK(in.ports[0].device == out.ports[0].device);
@@ -398,6 +400,7 @@ auto test_settings_round_trip() -> void {
     CHECK(in.speed.rewind_reverse_audio && in.speed.fast_forward_speed == 0);
     Settings defaults;
     CHECK(defaults.speed.rewind && defaults.speed.fast_forward_speed == 4 && !defaults.speed.rewind_reverse_audio);
+    CHECK(defaults.show_messages);
 }
 
 } // namespace

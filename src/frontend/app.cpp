@@ -641,6 +641,10 @@ auto App::draw_menu_bar() -> void {
         }
         if (ImGui::MenuItem("Integer scaling", nullptr, &settings_.integer_scaling)) save_settings();
         if (ImGui::MenuItem("8:7 pixel aspect", nullptr, &settings_.aspect_8_7)) apply_view();
+        if (ImGui::MenuItem("On-screen messages", nullptr, &settings_.show_messages)) {
+            if (!settings_.show_messages) game_.show_message({});
+            save_settings();
+        }
         if (ImGui::MenuItem("Fullscreen game window", "F11", game_.is_fullscreen(), game_.is_open())) {
             game_.toggle_fullscreen();
         }
@@ -1301,7 +1305,7 @@ auto App::state_hotkey(SDL_Keycode key, SDL_Keymod mod) -> bool {
 
 auto App::save_slot(int slot) -> void {
     const std::string error = emu_thread_.call([slot](EmuThread::Core& c) { return c.emu.save_state(slot); });
-    set_status(error.empty() ? "Saved state " + std::to_string(slot) : "Save failed: " + error);
+    notify(error.empty() ? "Saved state " + std::to_string(slot) : "Save failed: " + error);
 }
 
 auto App::load_slot(int slot) -> void {
@@ -1313,12 +1317,17 @@ auto App::load_slot(int slot) -> void {
         }
         return why;
     });
-    set_status(error.empty() ? "Loaded state " + std::to_string(slot) : error);
+    notify(error.empty() ? "Loaded state " + std::to_string(slot) : "Load failed: " + error);
 }
 
 auto App::set_status(std::string text) -> void {
     status_text_ = std::move(text);
     status_until_ns_ = SDL_GetTicksNS() + kStatusNs;
+}
+
+auto App::notify(std::string text) -> void {
+    if (settings_.show_messages) game_.show_message(text);
+    set_status(std::move(text));
 }
 
 // Reloads a slot's thumbnail when its file appears, changes or goes away.

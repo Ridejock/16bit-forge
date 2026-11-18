@@ -21,7 +21,8 @@ are emulated at the instruction level rather than with game-specific hacks.
 - **MSU-1** - streamed data and CD-quality audio tracks for ROM hacks and homebrew.
 - **Frontend**
   - ROM library (a `roms/` folder next to the program) and recent files
-  - 10 save state slots with thumbnails (Shift+F1-F10 to save, F1-F10 to load)
+  - 10 save state slots with thumbnails (Shift+F1-F10 to save, F1-F10 to load), with a
+    short on-screen message in the game window (View > On-screen messages turns it off)
   - rewind and fast-forward (hold or toggle), frame advance
   - battery saves and real-time-clock saves, written automatically
   - cheats: Game Genie, Pro Action Replay and raw address codes

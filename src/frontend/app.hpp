@@ -76,6 +76,8 @@ private:
     auto load_slot(int slot) -> void;
     auto state_hotkey(SDL_Keycode key, SDL_Keymod mod) -> bool;  // F1-F10 load, Shift+F1-F10 save
     auto set_status(std::string text) -> void;
+    // set_status, plus an on-screen message in the game window (if View > On-screen messages).
+    auto notify(std::string text) -> void;
     auto apply_log_settings() -> void;
     auto sync_input_settings() -> void;
     auto draw_status_bar() -> void;

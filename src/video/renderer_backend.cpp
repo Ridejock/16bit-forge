@@ -22,8 +22,10 @@ auto RendererBackend::create(SDL_Window* window) -> bool {
 
 auto RendererBackend::destroy() -> void {
     if (texture_) SDL_DestroyTexture(texture_);
+    if (overlay_) SDL_DestroyTexture(overlay_);
     if (renderer_) SDL_DestroyRenderer(renderer_);
     texture_ = nullptr;
+    overlay_ = nullptr;
     renderer_ = nullptr;
     tex_width_ = 0;
     tex_height_ = 0;
@@ -51,7 +53,18 @@ auto RendererBackend::upload_frame(const uint32_t* pixels, int width, int height
                  SDL_UpdateTexture(texture_, nullptr, pixels, pitch);
 }
 
-auto RendererBackend::present(const Viewport& viewport) -> void {
+auto RendererBackend::upload_overlay(const uint32_t* pixels, int width, int height) -> void {
+    if (overlay_) SDL_DestroyTexture(overlay_);
+    overlay_ = nullptr;
+    if (!renderer_ || !pixels || width <= 0 || height <= 0) return;
+    overlay_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, width, height);
+    if (!overlay_) return;
+    SDL_UpdateTexture(overlay_, nullptr, pixels, width * static_cast<int>(sizeof(uint32_t)));
+    SDL_SetTextureBlendMode(overlay_, SDL_BLENDMODE_BLEND);
+    SDL_SetTextureScaleMode(overlay_, SDL_SCALEMODE_NEAREST);
+}
+
+auto RendererBackend::present(const Viewport& viewport, const OverlayPlacement& overlay) -> void {
     if (!renderer_) return;
     SDL_SetRenderDrawColor(renderer_, 0, 0, 0, SDL_ALPHA_OPAQUE);
     SDL_RenderClear(renderer_);
@@ -59,6 +72,12 @@ auto RendererBackend::present(const Viewport& viewport) -> void {
         const SDL_FRect dst{static_cast<float>(viewport.x), static_cast<float>(viewport.y),
                             static_cast<float>(viewport.w), static_cast<float>(viewport.h)};
         SDL_RenderTexture(renderer_, texture_, nullptr, &dst);
+    }
+    if (overlay_ && overlay.opacity > 0.0f) {
+        const SDL_FRect dst{static_cast<float>(overlay.rect.x), static_cast<float>(overlay.rect.y),
+                            static_cast<float>(overlay.rect.w), static_cast<float>(overlay.rect.h)};
+        SDL_SetTextureAlphaModFloat(overlay_, overlay.opacity);
+        SDL_RenderTexture(renderer_, overlay_, nullptr, &dst);
     }
     if (const auto path = take_screenshot_request()) {
         SDL_Surface* shot = SDL_RenderReadPixels(renderer_, nullptr);
