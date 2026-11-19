@@ -97,15 +97,49 @@ auto RewindBuffer::clear() -> void {
     newest_.clear();
     deltas_.clear();
     delta_bytes_ = 0;
+    thumbs_.clear();
+    thumb_bytes_ = 0;
 }
 
-auto RewindBuffer::push(std::vector<uint8_t> state) -> void {
+auto RewindBuffer::drop_oldest_thumb() -> void {
+    if (thumbs_.empty()) return;
+    thumb_bytes_ -= thumbs_.front().pixels.size() * sizeof(uint32_t);
+    thumbs_.pop_front();
+}
+
+auto RewindBuffer::drop_newest_thumb() -> void {
+    if (thumbs_.empty()) return;
+    thumb_bytes_ -= thumbs_.back().pixels.size() * sizeof(uint32_t);
+    thumbs_.pop_back();
+}
+
+auto RewindBuffer::index_of(uint64_t id) const -> std::optional<size_t> {
+    for (size_t i = 0; i < thumbs_.size(); i++) {
+        if (thumbs_[i].id == id) return i;
+    }
+    return std::nullopt;
+}
+
+auto RewindBuffer::rewind_copy(size_t steps) const -> std::optional<std::vector<uint8_t>> {
+    if (newest_.empty() || steps > deltas_.size()) return std::nullopt;
+    std::vector<uint8_t> state = newest_;
+    for (size_t s = 0; s < steps; s++) {
+        const Delta& d = deltas_[deltas_.size() - 1 - s];
+        if (!apply_delta(state, d.data, d.size)) return std::nullopt;
+    }
+    return state;
+}
+
+auto RewindBuffer::push(std::vector<uint8_t> state, RewindThumb thumb) -> void {
     if (!newest_.empty()) {
         Delta d{encode_delta(newest_, state), newest_.size()};
         delta_bytes_ += d.data.size();
         deltas_.push_back(std::move(d));
     }
     newest_ = std::move(state);
+    thumb.id = next_id_++;
+    thumb_bytes_ += thumb.pixels.size() * sizeof(uint32_t);
+    thumbs_.push_back(std::move(thumb));
     trim();
 }
 
@@ -117,18 +151,62 @@ auto RewindBuffer::pop() -> std::optional<std::vector<uint8_t>> {
         if (!apply_delta(newest_, d.data, d.size)) {  // can't happen with our own data; drop the history
             deltas_.clear();
             delta_bytes_ = 0;
+            while (thumbs_.size() > 1) drop_oldest_thumb();
             return current;
         }
         delta_bytes_ -= d.data.size();
         deltas_.pop_back();
+        drop_newest_thumb();
     }
     return current;
+}
+
+auto RewindBuffer::state_at(uint64_t id) const -> std::optional<std::vector<uint8_t>> {
+    const auto index = index_of(id);
+    if (!index) return std::nullopt;
+    return rewind_copy(thumbs_.size() - 1 - *index);
+}
+
+auto RewindBuffer::seek(uint64_t id) -> std::optional<std::vector<uint8_t>> {
+    const auto index = index_of(id);
+    if (!index) return std::nullopt;
+    const size_t drop = thumbs_.size() - 1 - *index;
+    for (size_t n = 0; n < drop; n++) {
+        if (deltas_.empty()) {
+            clear();
+            return std::nullopt;
+        }
+        Delta d = std::move(deltas_.back());
+        deltas_.pop_back();
+        delta_bytes_ -= d.data.size();
+        if (!apply_delta(newest_, d.data, d.size)) {
+            clear();
+            return std::nullopt;
+        }
+        drop_newest_thumb();
+    }
+    return newest_;
+}
+
+auto RewindBuffer::thumb_at(uint64_t id) const -> const RewindThumb* {
+    const auto index = index_of(id);
+    return index ? &thumbs_[*index] : nullptr;
+}
+
+auto RewindBuffer::thumbs(uint64_t first, uint64_t last) const -> std::vector<RewindThumb> {
+    std::vector<RewindThumb> out;
+    if (first > last) return out;
+    for (const RewindThumb& thumb : thumbs_) {
+        if (thumb.id >= first && thumb.id <= last) out.push_back(thumb);
+    }
+    return out;
 }
 
 auto RewindBuffer::trim() -> void {
     while (!deltas_.empty() && bytes() > budget_) {
         delta_bytes_ -= deltas_.front().data.size();
         deltas_.pop_front();
+        drop_oldest_thumb();
     }
 }
 

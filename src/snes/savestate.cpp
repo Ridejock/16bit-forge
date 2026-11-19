@@ -87,6 +87,27 @@ auto encode(System& system, uint64_t frame, int64_t timestamp, const uint32_t* p
     return ar.data();
 }
 
+auto encode_from_state(uint32_t rom_crc, uint64_t frame, int64_t timestamp, const uint32_t* thumb, int thumb_w,
+                       int thumb_h, std::span<const uint8_t> state) -> std::vector<uint8_t> {
+    Info info;
+    info.version = kVersion;
+    info.rom_crc = rom_crc;
+    info.frame = frame;
+    info.timestamp = timestamp;
+    if (thumb && thumb_w > 0 && thumb_h > 0 && thumb_w <= kMaxThumbSide && thumb_h <= kMaxThumbSide) {
+        info.thumb_w = thumb_w;
+        info.thumb_h = thumb_h;
+        info.thumbnail.assign(thumb, thumb + static_cast<size_t>(thumb_w) * static_cast<size_t>(thumb_h));
+    }
+    Archive ar = Archive::saver();
+    header(ar, info);
+    auto size = static_cast<uint32_t>(state.size());
+    ar(size);
+    // Saver only reads. The archive takes a non-const pointer because the loader writes through it.
+    ar.bytes(const_cast<uint8_t*>(state.data()), state.size());
+    return ar.data();
+}
+
 auto read_info(std::span<const uint8_t> file, Info& info) -> Result {
     Archive ar = Archive::loader(file);
     return read_header(ar, info);

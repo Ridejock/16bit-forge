@@ -46,6 +46,10 @@ auto make_thumbnail(const uint32_t* pixels, int width, int height, Info& info) -
 // `version` below kVersion writes that older layout (for testing the older-file paths).
 auto encode(System& system, uint64_t frame, int64_t timestamp, const uint32_t* pixels, int width, int height,
             uint32_t version = kVersion) -> std::vector<uint8_t>;
+// A state file from an already-serialized machine (`state` is System::save_state()'s bytes) and a
+// thumbnail. `thumb` may be null. Used to save a rewind moment without loading it.
+auto encode_from_state(uint32_t rom_crc, uint64_t frame, int64_t timestamp, const uint32_t* thumb, int thumb_w,
+                       int thumb_h, std::span<const uint8_t> state) -> std::vector<uint8_t>;
 // Header and thumbnail only (for the slot menu). Checks magic and version (kMinVersion..kVersion).
 auto read_info(std::span<const uint8_t> file, Info& info) -> Result;
 // Checks magic, version and ROM, then restores the machine (untouched on any failure).

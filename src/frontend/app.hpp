@@ -81,6 +81,13 @@ private:
     auto apply_log_settings() -> void;
     auto sync_input_settings() -> void;
     auto draw_status_bar() -> void;
+    auto timeline_hint_height() -> float;
+    auto timeline_block_height() -> float;
+    auto sync_timeline() -> void;
+    auto draw_timeline() -> void;
+    auto clear_timeline() -> void;
+    auto play_from(uint64_t id) -> void;
+    auto save_moment(uint64_t id, int slot) -> void;
     auto draw_video_menus() -> void;
     auto draw_audio_menu() -> void;
     auto draw_audio_panel() -> void;
@@ -133,6 +140,16 @@ private:
         int thumb_h = 0;
     };
     std::array<SlotView, Emulator::kStateSlots> slots_{};
+    // Rewind timeline: one texture per snapshot still in the history, oldest first.
+    // Ids come from the rewind buffer and are never reused, so a texture stays with its moment.
+    struct TimelineView {
+        uint64_t id = 0;
+        uint64_t frame = 0;
+        SDL_Texture* texture = nullptr;
+        int w = 0;
+        int h = 0;
+    };
+    std::vector<TimelineView> timeline_{};
     std::string status_text_;  // shown in the status bar for a few seconds
     uint64_t status_until_ns_ = 0;
 

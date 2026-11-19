@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "frontend/emu_thread.hpp"
 #include "frontend/frame_pacer.hpp"
+#include "snes/savestate.hpp"
 #include "utils/logging.hpp"
 
 #include <SDL3/SDL.h>
@@ -231,7 +232,16 @@ auto EmuThread::snapshot_if_due() -> void {
     if (!c.speed.rewind) return;
     if (++c.frames_since_snapshot < c.rewind.interval()) return;
     c.frames_since_snapshot = 0;
-    c.rewind.push(c.emu.save_snapshot());
+    RewindThumb thumb;
+    thumb.frame = c.emu.frame_count();
+    if (const uint32_t* pixels = c.emu.framebuffer(); pixels && c.emu.width() > 0 && c.emu.height() > 0) {
+        bitforge::savestate::Info info;
+        bitforge::savestate::make_thumbnail(pixels, c.emu.width(), c.emu.height(), info);
+        thumb.w = info.thumb_w;
+        thumb.h = info.thumb_h;
+        thumb.pixels = std::move(info.thumbnail);
+    }
+    c.rewind.push(c.emu.save_snapshot(), std::move(thumb));
 }
 
 // Normal speed: one frame, its audio as is. Fast-forward: `speed` frames (or as many as fit in
@@ -337,6 +347,9 @@ auto EmuThread::publish_status() -> void {
     s.rewind_entries = c.rewind.entries();
     s.rewind_bytes = c.rewind.bytes();
     s.rewind_seconds = static_cast<double>(c.rewind.entries()) * c.rewind.interval() / Emulator::kNtscFrameRate;
+    s.rewind_enabled = c.speed.rewind;
+    s.timeline_oldest_id = c.rewind.oldest_id();
+    s.timeline_newest_id = c.rewind.newest_id();
     s.device_recording = c.audio.device_recording();
     if (s.device_recording) {
         s.device_recording_path = c.audio.device_recording_path();

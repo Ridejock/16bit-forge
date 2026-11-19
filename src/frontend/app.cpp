@@ -180,6 +180,7 @@ auto App::shutdown() -> void {
         if (slot.texture) SDL_DestroyTexture(slot.texture);
         slot = SlotView{};
     }
+    clear_timeline();
     game_.close();
     set_core_recording(false);  // logs where the files went
     set_device_recording(false);
@@ -524,9 +525,10 @@ auto App::draw_ui() -> void {
 
     draw_menu_bar();
 
-    // Reserve one line at the bottom for the status bar.
+    // Reserve the status bar, and the timeline strip while a game is loaded.
     const float status_h = ImGui::GetFrameHeightWithSpacing();
-    const float body_h = ImGui::GetContentRegionAvail().y - status_h;
+    const float strip_h = status_.loaded ? timeline_block_height() : 0.f;
+    const float body_h = std::max(1.f, ImGui::GetContentRegionAvail().y - status_h - strip_h);
     const bool panels = settings_.show_log || show_controls_ || show_audio_ || show_speed_ || show_cheats_;
     const float library_h = panels ? body_h * kLibraryShare : body_h;
 
@@ -562,6 +564,7 @@ auto App::draw_ui() -> void {
         ImGui::EndChild();
     }
 
+    if (status_.loaded) draw_timeline();
     draw_status_bar();
     ImGui::End();
 
@@ -1104,7 +1107,7 @@ auto App::draw_speed_panel() -> void {
     bool changed = false;
     ImGui::SeparatorText("Rewind");
     changed |= ImGui::Checkbox("Enable rewind", &s.rewind);
-    ImGui::SetItemTooltip("Keeps compressed snapshots in memory while the game runs. Hold the rewind hotkey to go back.");
+    ImGui::SetItemTooltip("Keeps compressed snapshots in memory while the game runs. The timeline shows them; hold the rewind hotkey to step back.");
     ImGui::BeginDisabled(!s.rewind);
     ImGui::SetNextItemWidth(ImGui::GetFontSize() * 14.f);
     ImGui::SliderInt("Memory budget", &s.rewind_budget_mb, SpeedConfig::kMinBudgetMb, SpeedConfig::kMaxBudgetMb, "%d MB",
@@ -1123,6 +1126,7 @@ auto App::draw_speed_panel() -> void {
     if (status_.loaded) {
         ImGui::Text("History: %zu snapshots, %.1f s, %.1f MB", status_.rewind_entries, status_.rewind_seconds,
                     static_cast<double>(status_.rewind_bytes) / (1 << 20));
+        ImGui::TextDisabled("The timeline under the library shows those snapshots.");
     }
     ImGui::EndDisabled();
 
@@ -1417,6 +1421,182 @@ auto App::draw_state_menu(bool save) -> void {
         }
         ImGui::PopID();
     }
+}
+
+auto App::timeline_hint_height() -> float {
+    // The longest line, wrapped to this window, so a narrow window doesn't clip the instruction
+    // and the strip below it doesn't jump when the message changes.
+    const char* hints[] = {
+        "Click a picture to play from there. Right-click it to save that moment to a slot.",
+        "Rewind is off. Enable it under Emulation > Rewind / Fast-forward.",
+        "It fills in as the game runs.",
+    };
+    const float label_w = ImGui::CalcTextSize("Timeline ").x;
+    const float wrap = std::max(1.f, ImGui::GetContentRegionAvail().x - label_w);
+    float height = ImGui::GetTextLineHeight();
+    for (const char* hint : hints) {
+        height = std::max(height, ImGui::CalcTextSize(hint, nullptr, false, wrap).y);
+    }
+    return height + ImGui::GetStyle().ItemSpacing.y;
+}
+
+auto App::timeline_block_height() -> float {
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float thumb = kThumbHeight * display_scale();
+    // ImageButton adds frame padding around the picture. The scrollbar is always reserved so the
+    // strip doesn't jump when the history grows past the window.
+    const float item = thumb + style.FramePadding.y * 2.f;
+    const float child = item + style.WindowPadding.y * 2.f + style.ScrollbarSize + style.WindowBorderSize * 2.f;
+    return timeline_hint_height() + child + style.ItemSpacing.y;
+}
+
+auto App::clear_timeline() -> void {
+    for (TimelineView& view : timeline_) {
+        if (view.texture) SDL_DestroyTexture(view.texture);
+    }
+    timeline_.clear();
+}
+
+// Pulls pictures for ids the strip doesn't have yet, and drops textures for moments that have
+// fallen out of the history. One new snapshot arrives every few frames, so this copies one
+// thumbnail at a time rather than the whole strip.
+auto App::sync_timeline() -> void {
+    const uint64_t lo = status_.timeline_oldest_id;
+    const uint64_t hi = status_.timeline_newest_id;
+    if (!status_.loaded || lo == 0 || hi == 0) {
+        clear_timeline();
+        return;
+    }
+    std::erase_if(timeline_, [&](TimelineView& view) {
+        if (view.id >= lo && view.id <= hi) return false;
+        if (view.texture) SDL_DestroyTexture(view.texture);
+        view.texture = nullptr;
+        return true;
+    });
+    const uint64_t have = timeline_.empty() ? 0 : timeline_.back().id;
+    const uint64_t from = timeline_.empty() ? lo : have + 1;
+    if (from > hi) return;
+    const std::vector<RewindThumb> fresh = emu_thread_.call([from, hi](EmuThread::Core& c) { return c.rewind.thumbs(from, hi); });
+    for (const RewindThumb& thumb : fresh) {
+        if (!timeline_.empty() && thumb.id <= timeline_.back().id) continue;
+        TimelineView view;
+        view.id = thumb.id;
+        view.frame = thumb.frame;
+        view.w = thumb.w;
+        view.h = thumb.h;
+        if (thumb.w > 0 && thumb.h > 0 && !thumb.pixels.empty() && main_renderer_) {
+            view.texture = SDL_CreateTexture(main_renderer_, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STATIC, thumb.w, thumb.h);
+            if (view.texture) {
+                SDL_UpdateTexture(view.texture, nullptr, thumb.pixels.data(), thumb.w * 4);
+                SDL_SetTextureScaleMode(view.texture, SDL_SCALEMODE_LINEAR);
+            }
+        }
+        timeline_.push_back(view);
+    }
+}
+
+auto App::play_from(uint64_t id) -> void {
+    uint64_t frame = 0;
+    for (const TimelineView& view : timeline_) {
+        if (view.id == id) frame = view.frame;
+    }
+    const bool ok = emu_thread_.call([id](EmuThread::Core& c) {
+        const auto state = c.rewind.seek(id);
+        if (!state || !c.emu.load_snapshot(*state)) return false;
+        c.audio.flush();  // the sound jumps: fade the queue out and the new audio in
+        c.frames_since_snapshot = 0;
+        c.fast_forward_toggled = false;  // land at normal speed; the fast-forward key still works
+        c.state = RunState::Running;
+        c.republish = true;
+        return true;
+    });
+    notify(ok ? "Playing from " + Emulator::play_time_text(frame) : "That moment is no longer in the timeline");
+}
+
+auto App::save_moment(uint64_t id, int slot) -> void {
+    const std::string error = emu_thread_.call([id, slot](EmuThread::Core& c) {
+        const auto state = c.rewind.state_at(id);
+        const RewindThumb* thumb = c.rewind.thumb_at(id);
+        if (!state || !thumb) return std::string("that moment is no longer in the timeline");
+        const uint32_t* pixels = thumb->pixels.empty() ? nullptr : thumb->pixels.data();
+        return c.emu.save_snapshot_to_slot(slot, *state, pixels, thumb->w, thumb->h);
+    });
+    notify(error.empty() ? "Saved that moment to slot " + std::to_string(slot) : "Save failed: " + error);
+}
+
+auto App::draw_timeline() -> void {
+    sync_timeline();
+    const char* hint = "Click a picture to play from there. Right-click it to save that moment to a slot.";
+    if (!status_.rewind_enabled) hint = "Rewind is off. Enable it under Emulation > Rewind / Fast-forward.";
+    else if (timeline_.empty()) hint = "It fills in as the game runs.";
+    ImGui::TextUnformatted("Timeline");
+    ImGui::SameLine();
+    ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + ImGui::GetContentRegionAvail().x);
+    ImGui::TextDisabled("%s", hint);
+    ImGui::PopTextWrapPos();
+
+    const float thumb_h = kThumbHeight * display_scale();
+    const float child_h = timeline_block_height() - timeline_hint_height() - ImGui::GetStyle().ItemSpacing.y;
+    ImGui::BeginChild("timeline", ImVec2(0.f, child_h), ImGuiChildFlags_Borders,
+                      ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_AlwaysHorizontalScrollbar);
+    if (timeline_.empty()) {
+        ImGui::TextDisabled("No moments yet.");
+    }
+    // Stay pinned to the newest moment unless the strip has been scrolled back.
+    const bool follow = ImGui::GetScrollX() >= ImGui::GetScrollMaxX() - 2.f;
+    for (size_t i = 0; i < timeline_.size(); i++) {
+        const TimelineView& view = timeline_[i];
+        if (i > 0) ImGui::SameLine();
+        ImGui::PushID(static_cast<int>(view.id));
+        const float w = view.h > 0 ? thumb_h * static_cast<float>(view.w) / static_cast<float>(view.h) : thumb_h * 8.f / 7.f;
+        bool clicked = false;
+        if (view.texture) {
+            clicked = ImGui::ImageButton("shot", static_cast<ImTextureID>(reinterpret_cast<intptr_t>(view.texture)), ImVec2(w, thumb_h),
+                                         ImVec2(0.f, 0.f), ImVec2(1.f, 1.f), ImVec4(0.f, 0.f, 0.f, 1.f));
+        } else {
+            clicked = ImGui::Button("shot", ImVec2(w, thumb_h));
+        }
+        if (view.id == status_.timeline_newest_id) {
+            const ImVec2 min = ImGui::GetItemRectMin();
+            const ImVec2 max = ImGui::GetItemRectMax();
+            ImGui::GetWindowDrawList()->AddRect(min, max, IM_COL32(242, 209, 71, 255), 0.f, 0, 2.f);
+        }
+        if (clicked) play_from(view.id);
+        // The strip is on the bottom edge. A menu that opens downward is clipped before the last
+        // slot, so anchor the popup's bottom-left to the thumbnail's top-left.
+        ImGui::SetNextWindowPos(ImGui::GetItemRectMin(), ImGuiCond_Appearing, ImVec2(0.f, 1.f));
+        if (ImGui::BeginPopupContextItem()) {
+            refresh_slots();
+            ImGui::TextDisabled("Save this moment");
+            ImGui::Separator();
+            for (int slot = 0; slot < Emulator::kStateSlots; slot++) {
+                const SlotView& saved = slots_[static_cast<size_t>(slot)];
+                char label[128];
+                if (saved.when.empty()) SDL_snprintf(label, sizeof(label), "Slot %d   (empty)", slot + 1);
+                else SDL_snprintf(label, sizeof(label), "Slot %d   %s", slot + 1, saved.when.c_str());
+                if (ImGui::MenuItem(label)) save_moment(view.id, slot + 1);
+            }
+            ImGui::EndPopup();
+        }
+        if (ImGui::BeginItemTooltip()) {
+            if (view.texture) {
+                const float big_h = thumb_h * 2.f;
+                const float big_w = view.h > 0 ? big_h * static_cast<float>(view.w) / static_cast<float>(view.h) : big_h * 8.f / 7.f;
+                ImGui::Image(static_cast<ImTextureID>(reinterpret_cast<intptr_t>(view.texture)), ImVec2(big_w, big_h));
+            }
+            ImGui::Text("Play time %s (frame %llu)", Emulator::play_time_text(view.frame).c_str(),
+                        static_cast<unsigned long long>(view.frame));
+            if (status_.frame_count >= view.frame) {
+                const double ago = static_cast<double>(status_.frame_count - view.frame) / Emulator::kNtscFrameRate;
+                ImGui::Text("%.1f s ago", ago);
+            }
+            ImGui::TextDisabled("Click to play from here. Right-click to save to a slot.");
+            ImGui::EndTooltip();
+        }
+        if (follow && i + 1 == timeline_.size()) ImGui::SetScrollHereX(1.f);
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
 }
 
 auto App::draw_status_bar() -> void {

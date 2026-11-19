@@ -61,6 +61,9 @@ struct EmuStatus {
     size_t rewind_entries = 0;
     size_t rewind_bytes = 0;
     double rewind_seconds = 0.0;    // how far back the history reaches
+    bool rewind_enabled = false;
+    uint64_t timeline_oldest_id = 0;  // 0 when the timeline has nothing to show
+    uint64_t timeline_newest_id = 0;
 };
 
 

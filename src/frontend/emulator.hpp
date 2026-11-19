@@ -90,6 +90,10 @@ public:
     // In-memory snapshot for rewind: the frame counter and the machine (no header or thumbnail).
     auto save_snapshot() -> std::vector<uint8_t>;
     auto load_snapshot(std::span<const uint8_t> data) -> bool;
+    // Writes slot `slot` from a rewind snapshot (frame counter, then the machine) and that
+    // moment's picture, without loading it. The running game stays where it is.
+    auto save_snapshot_to_slot(int slot, std::span<const uint8_t> snapshot, const uint32_t* thumb, int thumb_w,
+                               int thumb_h) -> std::string;
     static auto read_slot_info(const std::string& path) -> std::optional<SlotInfo>;
     // For the slot menu: "just now", "5 min ago", "3 h ago", "2 days ago" (`now` and `saved` in
     // Unix seconds), and "1:02:03" for a frame count at the NTSC rate.

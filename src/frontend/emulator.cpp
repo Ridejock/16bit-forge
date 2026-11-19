@@ -229,8 +229,32 @@ auto Emulator::load_snapshot(std::span<const uint8_t> data) -> bool {
     if (!system_->load_state(data.subspan(sizeof(uint64_t)))) return false;
     frames_ = 0;
     for (size_t i = 0; i < sizeof(uint64_t); i++) frames_ |= static_cast<uint64_t>(data[i]) << (8 * i);
+    const auto [w, h] = system_->get_framebuffer_size();
+    width_ = w;
+    height_ = h;
     seen_output_ = true;
     return true;
+}
+
+auto Emulator::save_snapshot_to_slot(int slot, std::span<const uint8_t> snapshot, const uint32_t* thumb, int thumb_w,
+                                     int thumb_h) -> std::string {
+    if (!system_) return "no game is running";
+    if (slot < 1 || slot > kStateSlots) return "that slot does not exist";
+    if (snapshot.size() <= sizeof(uint64_t)) return "that moment is no longer in the timeline";
+    uint64_t frame = 0;
+    for (size_t i = 0; i < sizeof(uint64_t); i++) frame |= static_cast<uint64_t>(snapshot[i]) << (8 * i);
+    const bool have_thumb = thumb && thumb_w > 0 && thumb_h > 0;
+    const std::vector<uint8_t> data = savestate::encode_from_state(
+        system_->rom_crc32(), frame, unix_now(), have_thumb ? thumb : nullptr, have_thumb ? thumb_w : 0,
+        have_thumb ? thumb_h : 0, snapshot.subspan(sizeof(uint64_t)));
+    const std::string path = state_path(slot);
+    if (!write_file(path, data)) {
+        utils::Logger::error(utils::LogChannel::State, "Could not write %s", path.c_str());
+        return "could not write " + path;
+    }
+    utils::Logger::info(utils::LogChannel::State, "Saved timeline moment to state %d (%zu KB): %s", slot, data.size() / 1024,
+                        path.c_str());
+    return {};
 }
 
 auto Emulator::slot_info(int slot) const -> std::optional<SlotInfo> {

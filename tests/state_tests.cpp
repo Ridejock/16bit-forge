@@ -574,6 +574,59 @@ auto test_cheats_file() -> void {
     fs::remove_all(dir);
 }
 
+// A rewind moment written straight into a slot, without loading it over the running game.
+auto test_timeline_slot(const std::string& rom) -> bool {
+    using namespace bitforge::frontend;
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "snes_state_tests_timeline";
+    fs::remove_all(dir);
+    Emulator emu;
+    emu.set_data_dir(dir.string());
+    if (!emu.load(rom)) return false;
+    while (emu.showing_test_pattern() && emu.frame_count() < 600) emu.run_frame();
+    CHECK(!emu.showing_test_pattern());
+    const uint64_t frame = emu.frame_count();
+    const int w = emu.width();
+    const int h = emu.height();
+    Hash picture;
+    picture.add(emu.framebuffer(), static_cast<size_t>(w) * static_cast<size_t>(h) * 4);
+    const auto snap = emu.save_snapshot();
+    bitforge::savestate::Info info;
+    bitforge::savestate::make_thumbnail(emu.framebuffer(), w, h, info);
+    const auto pixels = info.thumbnail;
+    RewindBuffer line;
+    line.configure(8u << 20, 4);
+    RewindThumb thumb;
+    thumb.frame = frame;
+    thumb.w = info.thumb_w;
+    thumb.h = info.thumb_h;
+    thumb.pixels = pixels;
+    line.push(snap, thumb);
+    emu.run_frame();
+    line.push(emu.save_snapshot(), {});
+    CHECK(emu.frame_count() == frame + 1 && line.entries() == 2);
+    const auto past = line.state_at(line.oldest_id());
+    CHECK(past && *past == snap && line.entries() == 2);
+    CHECK(line.thumb_at(line.oldest_id())->pixels == pixels);
+    CHECK(emu.save_snapshot_to_slot(0, snap, pixels.data(), info.thumb_w, info.thumb_h).size() > 0);
+    CHECK(emu.save_snapshot_to_slot(3, snap, pixels.data(), info.thumb_w, info.thumb_h).empty());
+    CHECK(emu.frame_count() == frame + 1);  // saving the moment did not move the running game
+    const auto slot = emu.slot_info(3);
+    CHECK(slot && slot->frame == frame && slot->thumb_w == info.thumb_w && slot->thumbnail == pixels);
+    CHECK(emu.load_state(3).empty());
+    CHECK(emu.frame_count() == frame && emu.width() == w && emu.height() == h);
+    Hash again;
+    again.add(emu.framebuffer(), static_cast<size_t>(emu.width()) * static_cast<size_t>(emu.height()) * 4);
+    CHECK(again.value == picture.value);
+    const auto landed = line.seek(line.oldest_id());
+    CHECK(landed && *landed == snap && line.entries() == 1);
+    CHECK(emu.load_snapshot(*landed));
+    CHECK(emu.frame_count() == frame && emu.width() == w && emu.height() == h);
+    emu.unload();
+    fs::remove_all(dir);
+    return true;
+}
+
 // The delta coder and the history ring: exact round trips, size changes, the oldest entry held,
 // the budget trimming the oldest entries, the fast-forward audio squeeze.
 auto test_rewind_buffer() -> void {
@@ -623,6 +676,63 @@ auto test_rewind_buffer() -> void {
     CHECK(*r.pop() == noise);
     r.clear();
     CHECK(r.entries() == 0 && r.bytes() == 0);
+
+    // Timeline: pictures stay with their states, a seek drops only the future, and a peek does not.
+    {
+        RewindBuffer line;
+        line.configure(1 << 20, 4);
+        std::vector<std::vector<uint8_t>> shots;
+        std::vector<uint64_t> ids;
+        for (int i = 0; i < 5; i++) {
+            std::vector<uint8_t> st = a;
+            st[static_cast<size_t>(i)] = static_cast<uint8_t>(0xA0 + i);
+            RewindThumb thumb;
+            thumb.frame = static_cast<uint64_t>(1000 + i);
+            thumb.w = 1;
+            thumb.h = 1;
+            thumb.pixels = {static_cast<uint32_t>(i + 1)};
+            line.push(st, thumb);
+            shots.push_back(std::move(st));
+            ids.push_back(line.newest_id());
+        }
+        CHECK(line.entries() == 5 && line.oldest_id() == ids[0] && line.newest_id() == ids[4]);
+        const auto listed = line.thumbs(ids[1], ids[3]);
+        CHECK(listed.size() == 3 && listed[0].id == ids[1] && listed[1].frame == 1002 && listed[1].pixels[0] == 3u);
+        for (int i = 0; i < 5; i++) {
+            const auto got = line.state_at(ids[static_cast<size_t>(i)]);
+            CHECK(got && *got == shots[static_cast<size_t>(i)] && line.entries() == 5);
+            CHECK(line.thumb_at(ids[static_cast<size_t>(i)])->pixels[0] == static_cast<uint32_t>(i + 1));
+        }
+        CHECK(!line.state_at(0) && !line.seek(9999) && line.entries() == 5);
+        const auto landed = line.seek(ids[2]);
+        CHECK(landed && *landed == shots[2] && line.entries() == 3 && line.newest_id() == ids[2]);
+        CHECK(!line.thumb_at(ids[3]) && line.state_at(ids[0]) && *line.state_at(ids[0]) == shots[0]);
+        CHECK(*line.pop() == shots[2] && line.newest_id() == ids[1] && !line.thumb_at(ids[2]));
+        while (line.entries() > 1) line.pop();
+        const auto held_thumb = line.pop();
+        CHECK(held_thumb && *held_thumb == shots[0] && line.entries() == 1 && line.thumb_at(ids[0])->frame == 1000);
+        line.clear();
+        CHECK(line.entries() == 0 && line.newest_id() == 0 && line.bytes() == 0);
+
+        // Thumbnails count toward the budget, and the oldest pictures go first.
+        RewindBuffer pics;
+        pics.configure(50 * 1024, 4);
+        RewindThumb fat;
+        fat.w = 50;
+        fat.h = 40;
+        fat.pixels.assign(static_cast<size_t>(fat.w * fat.h), 1u);
+        std::vector<uint8_t> tiny(32, 7);
+        for (int i = 0; i < 30; i++) {
+            tiny[0] = static_cast<uint8_t>(i);
+            fat.pixels[0] = static_cast<uint32_t>(i + 1);
+            fat.frame = static_cast<uint64_t>(i);
+            pics.push(tiny, fat);
+        }
+        CHECK(pics.bytes() <= 50 * 1024 && pics.entries() >= 2 && pics.entries() < 30);
+        CHECK(pics.oldest_id() > 1);
+        CHECK(pics.thumb_at(pics.newest_id())->pixels[0] == 30u);
+        CHECK(pics.thumbs(pics.oldest_id(), pics.newest_id()).size() == pics.entries());
+    }
 
     std::vector<int16_t> out;
     squeeze_audio(std::vector<int16_t>{100, -100, 300, -300, 5, 6, 7, 8}, 2, out);
@@ -719,6 +829,7 @@ int main(int argc, char** argv) {
     run_test("Thumbnails: box filter, file round trip, slot info, versions", [] { test_thumbnails(); return true; });
     run_test("Rewind history: delta coding, budget, audio squeeze", [] { test_rewind_buffer(); return true; });
     const std::string built_rom = test_rom::write_test_rom(0);
+    run_test("Timeline: save a past moment to a slot", [&] { return test_timeline_slot(built_rom); });
     run_test("Rewind determinism (built-in test ROM)", [&] { return test_rewind_determinism(built_rom); });
 
     // The built-in test ROMs, then any in BITFORGE_TEST_ROMS_DIR, then the command line.

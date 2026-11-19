@@ -23,7 +23,8 @@ are emulated at the instruction level rather than with game-specific hacks.
   - ROM library (a `roms/` folder next to the program) and recent files
   - 10 save state slots with thumbnails (Shift+F1-F10 to save, F1-F10 to load), with a
     short on-screen message in the game window (View > On-screen messages turns it off)
-  - rewind and fast-forward (hold or toggle), frame advance
+  - rewind and fast-forward (hold or toggle), frame advance, and a timeline of rewind
+    snapshots (click one to play from there, right-click to save that moment to a slot)
   - battery saves and real-time-clock saves, written automatically
   - cheats: Game Genie, Pro Action Replay and raw address codes
   - GPU renderer (Vulkan / Direct3D 12 / Metal through SDL_GPU) with filter shaders:
@@ -89,6 +90,7 @@ box):
 | Fast-forward (hold) | Tab | Right trigger |
 | Fast-forward toggle | ` (backtick) | Right stick click |
 | Pause / run | Space | |
+| Timeline | click a thumbnail; right-click saves that moment to a slot | |
 | Save state 1-10 | Shift+F1 ... Shift+F10 | |
 | Load state 1-10 | F1 ... F10 | |
 | Fullscreen | F11 (Esc leaves) | |
