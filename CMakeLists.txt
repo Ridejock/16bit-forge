@@ -92,8 +92,16 @@ add_library(bitforge_core STATIC
     src/snes/savestate.cpp
     src/snes/msu1.cpp
     src/snes/cheats.cpp
-    src/snes/ramwatch.cpp
     src/snes/controllers.cpp
+    src/debug/memory_value.cpp
+    src/debug/ram_search.cpp
+    src/debug/memory_watch.cpp
+    src/speedrun/splits.cpp
+    src/speedrun/run_timer.cpp
+    src/speedrun/xml.cpp
+    src/speedrun/lss.cpp
+    src/speedrun/autosplit.cpp
+    src/speedrun/splits_file.cpp
     src/utils/logging.cpp
 )
 target_include_directories(bitforge_core PUBLIC src)
@@ -105,6 +113,8 @@ add_executable(${PROJECT_NAME}
     src/frontend/emu_thread.cpp
     src/frontend/emulator.cpp
     src/frontend/rewind.cpp
+    src/frontend/memory_panel.cpp
+    src/frontend/timer_panel.cpp
     src/frontend/game_window.cpp
     src/frontend/input.cpp
     src/frontend/settings.cpp
@@ -216,6 +226,20 @@ target_include_directories(filter_tests PRIVATE src)
 target_link_libraries(filter_tests PRIVATE bitforge_core)
 target_compile_definitions(filter_tests PRIVATE BITFORGE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
+# RAM search and memory watches (src/debug): the search filters and undo, value formats,
+# freezing, the watches file and cheat conversion. Headless, no ROM.
+add_executable(memory_tests tests/memory_tests.cpp)
+target_include_directories(memory_tests PRIVATE src)
+target_link_libraries(memory_tests PRIVATE bitforge_core)
+
+# Run timer and splits (src/speedrun): timing in both methods through pause, fast-forward and
+# rewind, split/undo/skip/reset, golds and PB, the .lss reader/writer and the auto-split sidecar;
+# then auto-splits against the real core on a built-in test ROM (and on any ROM given with
+# --rom <path> --watch <hex offset>, e.g. a homebrew game's HP). Headless.
+add_executable(timer_tests tests/timer_tests.cpp src/frontend/emulator.cpp src/frontend/rewind.cpp)
+target_include_directories(timer_tests PRIVATE src)
+target_link_libraries(timer_tests PRIVATE bitforge_core)
+
 # Frame pacing (header-only logic, virtual time).
 add_executable(pacer_tests tests/pacer_tests.cpp)
 target_include_directories(pacer_tests PRIVATE src)
@@ -228,17 +252,11 @@ add_executable(thread_tests tests/thread_tests.cpp src/frontend/emu_thread.cpp s
 target_include_directories(thread_tests PRIVATE src)
 target_link_libraries(thread_tests PRIVATE bitforge_core SDL3::SDL3-static Threads::Threads)
 
-# RAM search and memory watches: narrowing, permanent ids, once-per-frame conditions, freezes,
-# the cheat a watch becomes, and the per-game watch file. Headless.
-add_executable(ramwatch_tests tests/ramwatch_tests.cpp src/frontend/emulator.cpp)
-target_include_directories(ramwatch_tests PRIVATE src)
-target_link_libraries(ramwatch_tests PRIVATE bitforge_core)
-
 # Headless audio render to WAV (no SDL): audio_dump <rom.sfc|song.spc> <out.wav> [seconds]
 add_executable(audio_dump tools/audio_dump.cpp)
 target_link_libraries(audio_dump PRIVATE bitforge_core)
 
-foreach(target ${PROJECT_NAME} bitforge_core cpu_tests ppu_tests apu_tests state_tests chip_tests input_tests filter_tests audio_sync_tests pacer_tests thread_tests ramwatch_tests audio_dump)
+foreach(target ${PROJECT_NAME} bitforge_core cpu_tests ppu_tests apu_tests state_tests chip_tests input_tests filter_tests audio_sync_tests memory_tests timer_tests pacer_tests thread_tests audio_dump)
     if(MSVC)
         target_compile_options(${target} PRIVATE /W4)
         target_compile_definitions(${target} PRIVATE _CRT_SECURE_NO_WARNINGS)  # fopen/getenv are fine here
@@ -249,7 +267,7 @@ endforeach()
 
 # ---- tests: ctest runs every suite headless (no window, no audio device, no ROM files) ----
 enable_testing()
-foreach(suite cpu_tests ppu_tests apu_tests state_tests chip_tests audio_sync_tests input_tests filter_tests pacer_tests thread_tests ramwatch_tests)
+foreach(suite cpu_tests ppu_tests apu_tests state_tests chip_tests audio_sync_tests input_tests filter_tests memory_tests timer_tests pacer_tests thread_tests)
     add_test(NAME ${suite} COMMAND ${suite})
     set_tests_properties(${suite} PROPERTIES TIMEOUT 900 ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy")
 endforeach()

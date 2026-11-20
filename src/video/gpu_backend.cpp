@@ -148,7 +148,7 @@ auto GpuBackend::create(SDL_Window* window) -> bool {
         overlay_pipeline_ = create_fullscreen_pipeline(device_, vertex_shader_, fragment, swapchain_format_, true);
         SDL_ReleaseGPUShader(device_, fragment);
     }
-    if (!overlay_pipeline_) utils::Logger::warning(utils::LogChannel::Video, "SDL_GPU: no overlay shader, on-screen messages are off");
+    if (!overlay_pipeline_) utils::Logger::warning(utils::LogChannel::Video, "SDL_GPU: no overlay shader, on-screen messages and the timer overlay are off");
 
     const SDL_PropertiesID props = SDL_GetGPUDeviceProperties(device_);
     utils::Logger::info(utils::LogChannel::Video, "Game window renderer: %s, device '%s'", description().c_str(),
@@ -161,7 +161,7 @@ auto GpuBackend::destroy() -> void {
     // Resources may still be in use by in-flight frames; wait before destroying anything.
     SDL_WaitForGPUIdle(device_);
     release_passes();
-    release_overlay();
+    for (Overlay& overlay : overlays_) release_overlay(overlay);
     if (overlay_pipeline_) SDL_ReleaseGPUGraphicsPipeline(device_, overlay_pipeline_);
     overlay_pipeline_ = nullptr;
     for (SDL_GPUTexture* texture : {source_, capture_}) {
@@ -298,38 +298,36 @@ auto GpuBackend::upload_frame(const uint32_t* pixels, int width, int height, int
     has_frame_ = true;
 }
 
-auto GpuBackend::release_overlay() -> void {
-    if (overlay_) SDL_ReleaseGPUTexture(device_, overlay_);  // deferred by SDL until unused
-    if (overlay_upload_) SDL_ReleaseGPUTransferBuffer(device_, overlay_upload_);
-    overlay_ = nullptr;
-    overlay_upload_ = nullptr;
-    overlay_w_ = overlay_h_ = 0;
-    overlay_pending_ = false;
+auto GpuBackend::release_overlay(Overlay& overlay) -> void {
+    if (overlay.texture) SDL_ReleaseGPUTexture(device_, overlay.texture);  // deferred by SDL until unused
+    if (overlay.upload) SDL_ReleaseGPUTransferBuffer(device_, overlay.upload);
+    overlay = Overlay{};
 }
 
-auto GpuBackend::upload_overlay(const uint32_t* pixels, int width, int height) -> void {
+auto GpuBackend::upload_overlay(OverlayLayer layer, const uint32_t* pixels, int width, int height) -> void {
     if (!device_ || !overlay_pipeline_) return;
+    Overlay& overlay = overlays_[static_cast<size_t>(layer)];
     const auto w = static_cast<Uint32>(std::max(width, 0));
     const auto h = static_cast<Uint32>(std::max(height, 0));
-    if (!pixels || w == 0 || h == 0 || w != overlay_w_ || h != overlay_h_) release_overlay();
+    if (!pixels || w == 0 || h == 0 || w != overlay.w || h != overlay.h) release_overlay(overlay);
     if (!pixels || w == 0 || h == 0) return;
-    if (!overlay_) {
+    if (!overlay.texture) {
         // ARGB8888 in memory is B, G, R, A: the same format as the frame, alpha kept.
-        overlay_ = create_texture(device_, kSourceFormat, SDL_GPU_TEXTUREUSAGE_SAMPLER, w, h);
-        overlay_upload_ = create_transfer(device_, SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD, w * h * kBytesPerPixel);
-        if (!overlay_ || !overlay_upload_) {
+        overlay.texture = create_texture(device_, kSourceFormat, SDL_GPU_TEXTUREUSAGE_SAMPLER, w, h);
+        overlay.upload = create_transfer(device_, SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD, w * h * kBytesPerPixel);
+        if (!overlay.texture || !overlay.upload) {
             utils::Logger::error(utils::LogChannel::Video, "GpuBackend: could not create the %ux%u overlay: %s", w, h, SDL_GetError());
-            release_overlay();
+            release_overlay(overlay);
             return;
         }
-        overlay_w_ = w;
-        overlay_h_ = h;
+        overlay.w = w;
+        overlay.h = h;
     }
-    void* mapped = SDL_MapGPUTransferBuffer(device_, overlay_upload_, true);
+    void* mapped = SDL_MapGPUTransferBuffer(device_, overlay.upload, true);
     if (!mapped) return;
     std::memcpy(mapped, pixels, static_cast<size_t>(w) * h * kBytesPerPixel);
-    SDL_UnmapGPUTransferBuffer(device_, overlay_upload_);
-    overlay_pending_ = true;
+    SDL_UnmapGPUTransferBuffer(device_, overlay.upload);
+    overlay.pending = true;
 }
 
 auto GpuBackend::ensure_target(Pass& pass, Uint32 width, Uint32 height) -> bool {
@@ -432,27 +430,28 @@ auto GpuBackend::run_passes(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* output, c
     }
 }
 
-// Blends the overlay into `output` (already holding the picture) at its placement.
-auto GpuBackend::draw_overlay(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* output, const OverlayPlacement& overlay) -> void {
-    if (!overlay_ || overlay.opacity <= 0.0f || overlay.rect.w <= 0 || overlay.rect.h <= 0) return;
+// Blends an overlay into `output` (already holding the picture) at its placement.
+auto GpuBackend::draw_overlay(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* output, const Overlay& overlay,
+                              const OverlayPlacement& placement) -> void {
+    if (!overlay.texture || placement.opacity <= 0.0f || placement.rect.w <= 0 || placement.rect.h <= 0) return;
     SDL_GPUColorTargetInfo color{};
     color.texture = output;
     color.load_op = SDL_GPU_LOADOP_LOAD;
     color.store_op = SDL_GPU_STOREOP_STORE;
     SDL_GPURenderPass* render = SDL_BeginGPURenderPass(cmd, &color, 1, nullptr);
     SDL_BindGPUGraphicsPipeline(render, overlay_pipeline_);
-    const SDL_GPUViewport vp{static_cast<float>(overlay.rect.x), static_cast<float>(overlay.rect.y),
-                             static_cast<float>(overlay.rect.w), static_cast<float>(overlay.rect.h), 0.0f, 1.0f};
+    const SDL_GPUViewport vp{static_cast<float>(placement.rect.x), static_cast<float>(placement.rect.y),
+                             static_cast<float>(placement.rect.w), static_cast<float>(placement.rect.h), 0.0f, 1.0f};
     SDL_SetGPUViewport(render, &vp);
-    const SDL_GPUTextureSamplerBinding binding{overlay_, nearest_};
+    const SDL_GPUTextureSamplerBinding binding{overlay.texture, nearest_};
     SDL_BindGPUFragmentSamplers(render, 0, &binding, 1);
-    const OverlayUniforms uniforms{overlay.opacity, {}};
+    const OverlayUniforms uniforms{placement.opacity, {}};
     SDL_PushGPUFragmentUniformData(cmd, 0, &uniforms, static_cast<Uint32>(sizeof(uniforms)));
     SDL_DrawGPUPrimitives(render, 3, 1, 0, 0);
     SDL_EndGPURenderPass(render);
 }
 
-auto GpuBackend::present(const Viewport& viewport, const OverlayPlacement& overlay) -> void {
+auto GpuBackend::present(const Viewport& viewport, const OverlayPlacements& overlays) -> void {
     if (!device_) return;
     SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device_);
     if (!cmd) {
@@ -475,20 +474,21 @@ auto GpuBackend::present(const Viewport& viewport, const OverlayPlacement& overl
         SDL_EndGPUCopyPass(copy);
         upload_pending_ = false;
     }
-    if (overlay_pending_) {
+    for (Overlay& overlay : overlays_) {
+        if (!overlay.pending) continue;
         SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd);
         SDL_GPUTextureTransferInfo src{};
-        src.transfer_buffer = overlay_upload_;
-        src.pixels_per_row = overlay_w_;
-        src.rows_per_layer = overlay_h_;
+        src.transfer_buffer = overlay.upload;
+        src.pixels_per_row = overlay.w;
+        src.rows_per_layer = overlay.h;
         SDL_GPUTextureRegion dst{};
-        dst.texture = overlay_;
-        dst.w = overlay_w_;
-        dst.h = overlay_h_;
+        dst.texture = overlay.texture;
+        dst.w = overlay.w;
+        dst.h = overlay.h;
         dst.d = 1;
         SDL_UploadToGPUTexture(copy, &src, &dst, true);
         SDL_EndGPUCopyPass(copy);
-        overlay_pending_ = false;
+        overlay.pending = false;
     }
 
     SDL_GPUTexture* swapchain = nullptr;
@@ -513,7 +513,7 @@ auto GpuBackend::present(const Viewport& viewport, const OverlayPlacement& overl
     }
 
     run_passes(cmd, screenshot ? capture_ : swapchain, viewport);
-    draw_overlay(cmd, screenshot ? capture_ : swapchain, overlay);
+    for (size_t i = 0; i < overlays_.size(); i++) draw_overlay(cmd, screenshot ? capture_ : swapchain, overlays_[i], overlays[i]);
     frame_count_++;
 
     if (!screenshot) {

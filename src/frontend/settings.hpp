@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 #pragma once
+#include "frontend/game_window.hpp"
 #include "frontend/input.hpp"
 #include "frontend/rewind.hpp"
+#include "speedrun/splits.hpp"
 #include "utils/logging.hpp"
 #include "video/video_backend.hpp"
 #include <array>
@@ -9,6 +11,13 @@
 #include <vector>
 
 namespace bitforge::frontend {
+
+// [timer]: the run timer's view.
+struct TimerConfig {
+    speedrun::Method primary = speedrun::Method::Real;  // deltas, golds and the PB go by this one
+    bool overlay = false;                               // the compact timer over the game picture
+    Corner corner = Corner::TopRight;
+};
 
 struct Settings {
     static constexpr int kMinScale = 1;
@@ -34,6 +43,8 @@ struct Settings {
     std::array<PortConfig, kPadCount> ports{};      // [pad1]..[pad5]
     PortDevices port_devices = kDefaultPortDevices; // [ports]: what's in console ports 1 and 2
     PointerConfig pointer;                          // [ports]: mouse speed, scope crosshair
+    TimerConfig timer;                              // [timer]
+    bool show_timer = false;                        // the Timer tab is open
 
     // [log]: per-sink level and log file, per-channel enable. Applied to utils::Logger.
     struct Log {

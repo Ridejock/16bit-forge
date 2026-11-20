@@ -232,6 +232,32 @@ auto test_hotkeys() -> bool {
     input.on_key(SDLK_GRAVE, true);
     input.on_key(SDLK_GRAVE, false);
     CHECK(input.take_hotkey_press(Hotkey::FastForwardToggle) && !input.take_hotkey_press(Hotkey::FastForwardToggle));
+    // Memory watch (show/hide): M by default, no pad input, a press edge like the toggle.
+    const auto memory = static_cast<size_t>(Hotkey::MemoryWatch);
+    CHECK(kHotkeys[memory].default_key == SDLK_M && kHotkeys[memory].default_pad == kPadNone);
+    CHECK(input.on_key(SDLK_M, true) && input.state(0) == 0);
+    input.on_key(SDLK_M, false);
+    CHECK(input.take_hotkey_press(Hotkey::MemoryWatch) && !input.take_hotkey_press(Hotkey::MemoryWatch));
+    // Keys the app uses itself: state slots (F1-F10, Shift saves), fullscreen, Esc, pause (Space).
+    constexpr SDL_Keycode kFixedKeys[] = {SDLK_F1, SDLK_F2, SDLK_F3, SDLK_F4, SDLK_F5,  SDLK_F6,     SDLK_F7,
+                                          SDLK_F8, SDLK_F9, SDLK_F10, SDLK_F11, SDLK_ESCAPE, SDLK_SPACE};
+    for (size_t i = 0; i < kHotkeys.size(); i++) {
+        const auto& h = kHotkeys[i];
+        CHECK(!h.label.empty() && h.default_key != SDLK_UNKNOWN);
+        for (const auto& b : kPadButtons) CHECK(b.default_key != h.default_key);  // no clash with the pad keys
+        for (const SDL_Keycode k : kFixedKeys) CHECK(k != h.default_key);
+        for (size_t j = 0; j < i; j++) CHECK(kHotkeys[j].default_key != h.default_key);
+    }
+    // The timer's keys (numpad by default, no pad button) pass on the press's event time.
+    for (const auto& h : kHotkeys) {
+        if (h.name.starts_with("Timer")) CHECK(h.default_pad == kPadNone);
+    }
+    constexpr uint64_t kPressNs = 123'456'789;
+    uint64_t when = 0;
+    CHECK(input.on_key(SDLK_KP_1, true, kPressNs) && input.state(0) == 0);
+    input.on_key(SDLK_KP_1, false, kPressNs + 1);
+    CHECK(input.take_hotkey_press(Hotkey::TimerSplit, &when) && when == kPressNs);
+    CHECK(!input.take_hotkey_press(Hotkey::TimerSplit, &when) && when == 0);
 
     if (!SDL_InitSubSystem(SDL_INIT_GAMEPAD)) return false;
     input.open_connected();
@@ -370,6 +396,8 @@ auto test_settings_round_trip() -> void {
     out.hotkeys.keys[0] = SDLK_R;
     out.hotkeys.pad[0] = SDL_GAMEPAD_BUTTON_LEFT_SHOULDER;
     out.hotkeys.pad[2] = kPadNone;
+    out.hotkeys.keys[static_cast<size_t>(Hotkey::MemoryWatch)] = SDLK_F12;  // rebound in Controls
+    out.hotkeys.pad[static_cast<size_t>(Hotkey::MemoryWatch)] = SDL_GAMEPAD_BUTTON_GUIDE;
     out.speed = {false, 256, 10, true, 0};
     out.port_devices = {bitforge::Device::Mouse, bitforge::Device::SuperScope};
     out.pointer.mouse_speed = 150;

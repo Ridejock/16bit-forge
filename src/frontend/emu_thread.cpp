@@ -2,12 +2,15 @@
 #include "frontend/emu_thread.hpp"
 #include "frontend/frame_pacer.hpp"
 #include "snes/savestate.hpp"
+#include "speedrun/autosplit.hpp"
 #include "utils/logging.hpp"
 
 #include <SDL3/SDL.h>
 
 #include <algorithm>
 #include <chrono>
+#include <ctime>
+#include <filesystem>
 
 namespace bitforge::frontend {
 
@@ -24,6 +27,8 @@ constexpr uint32_t kFastHeld = 1u << 1;
 constexpr uint64_t kUncappedBudgetNs = 14'000'000;  // per displayed frame when fast-forward is uncapped
 constexpr int kMaxFastFrames = 60;                  // per displayed frame, whatever the speed
 constexpr size_t kSilentFrameSamples = 2 * 533;     // one frame of stereo at 32040 Hz
+constexpr const char* kDefaultCategory = "Any%";      // a new run's category
+constexpr size_t kDefaultSegments = 1;
 
 // ScopeInput in one word: x (bits 0-8), y (9-17), offscreen, fire, cursor, turbo, pause (18-22).
 auto pack_scope(const bitforge::ScopeInput& s) -> uint32_t {
@@ -44,6 +49,92 @@ auto unpack_scope(uint32_t v) -> bitforge::ScopeInput {
 }
 
 } // namespace
+
+auto EmuThread::timer_clock(uint64_t ticks_ns) -> speedrun::Clock {
+    return {static_cast<speedrun::Nanos>(ticks_ns ? ticks_ns : SDL_GetTicksNS()), static_cast<int64_t>(std::time(nullptr))};
+}
+
+// ---- run timer and splits (emulation thread) -------------------------------------------------
+
+auto EmuThread::Core::open_splits(const std::string& path) -> bool {
+    std::string error;
+    auto loaded = speedrun::load_splits(path, &error);
+    if (!loaded) {
+        splits.error = error;
+        utils::Logger::warning(utils::LogChannel::Rom, "Splits: %s", error.c_str());
+        return false;
+    }
+    save_splits();  // the run being replaced keeps what it had
+    // Its rules' watches join the game's list (the Memory tab shows them) if they aren't there.
+    std::vector<debug::Watch> watches = emu.watches();
+    if (speedrun::resolve_rules(loaded->run, watches) && !emu.set_watches(watches)) {
+        utils::Logger::error(utils::LogChannel::Rom, "Could not write %s", emu.watches_path().c_str());
+    }
+    splits.timer.set_run(std::move(loaded->run));
+    splits.timer.set_standard(emu.video_standard());
+    splits.file = std::move(loaded->file);
+    splits.error.clear();
+    speedrun::remember_splits_path(emu.data_dir(), emu.rom_stem(), path);
+    utils::Logger::info(utils::LogChannel::Rom, "Splits: %zu segments, %d attempts (%s)", splits.timer.run().segments.size(),
+                        splits.timer.run().attempt_count, path.c_str());
+    return true;
+}
+
+auto EmuThread::Core::new_splits(const std::string& path, bool write) -> void {
+    save_splits();
+    splits.timer.set_run(speedrun::make_run(emu.rom_name(), kDefaultCategory, kDefaultSegments), write);
+    splits.timer.set_standard(emu.video_standard());
+    splits.file = {path, {}};
+    speedrun::remember_splits_path(emu.data_dir(), emu.rom_stem(), path);
+    save_splits();
+}
+
+auto EmuThread::Core::set_run(speedrun::Run run) -> void {
+    std::vector<debug::Watch> watches = emu.watches();
+    if (speedrun::resolve_rules(run, watches) && !emu.set_watches(watches)) {
+        utils::Logger::error(utils::LogChannel::Rom, "Could not write %s", emu.watches_path().c_str());
+    }
+    splits.timer.set_run(std::move(run), true);
+    save_splits();
+}
+
+auto EmuThread::Core::save_splits() -> void {
+    if (!splits.timer.take_run_changed() || splits.file.path.empty()) return;
+    std::string error;
+    if (speedrun::save_splits(splits.timer.run(), splits.file, &error)) {
+        splits.error.clear();
+    } else {
+        splits.error = error;
+        utils::Logger::error(utils::LogChannel::Rom, "Splits: %s", error.c_str());
+    }
+}
+
+auto EmuThread::Core::sync_splits() -> void {
+    if (splits.rom == emu.rom_path()) return;
+    // The old game's attempt ends here; times it was waiting to save are dropped (there's no
+    // one to ask once the game is gone).
+    if (splits.timer.state() != speedrun::TimerState::Ready) {
+        splits.timer.reset(timer_clock());
+        splits.timer.resolve_pending(false);
+    }
+    save_splits();
+    splits.rom = emu.rom_path();
+    splits.error.clear();
+    if (splits.rom.empty()) {
+        splits.timer.set_run(speedrun::Run{});
+        splits.file = {};
+        return;
+    }
+    // The game's last file, else its default one, else a new run (saved once it changes).
+    std::error_code ec;
+    const std::string fallback = speedrun::default_splits_path(emu.data_dir(), emu.rom_stem());
+    for (const std::string& path : {speedrun::remembered_splits_path(emu.data_dir(), emu.rom_stem()), fallback}) {
+        if (std::filesystem::exists(path, ec) && open_splits(path)) return;
+    }
+    const std::string error = splits.error;
+    new_splits(fallback, false);
+    splits.error = error;
+}
 
 auto EmuThread::start() -> void {
     if (running()) return;
@@ -117,10 +208,16 @@ auto EmuThread::run() -> void {
             core_.republish = false;
             publish_frame();
         }
-        if (ran > 0) publish_status();
+        if (ran > 0) {
+            core_.save_splits();  // a command reset the timer or edited the run, say
+            publish_status();
+        }
 
         const bool stepped = step();
         publish_status();
+        const bool view = memory_view_.load(std::memory_order_relaxed);
+        if (view && (stepped || ran > 0 || !memory_live_)) publish_memory();
+        memory_live_ = view;
 
         const uint64_t sleep_ns = pacer.advance(SDL_GetTicksNS());
         if (stepped && core_.audio_sync && wait_for_audio(pacer.next_ns() + kFrameNs)) {
@@ -130,6 +227,7 @@ auto EmuThread::run() -> void {
         if (sleep_ns > 0) SDL_DelayPrecise(sleep_ns);
     }
     commands_.close_and_drain(core_);  // a call() posted just before stop() still gets its answer
+    core_.save_splits();
     core_.audio.end_session();         // nothing plays or counts through the teardown that follows
     publish_status();
     utils::Logger::info("Emulation thread stopped");
@@ -152,6 +250,7 @@ auto EmuThread::step() -> bool {
         c.frames_since_snapshot = 0;
         c.fast_forward_toggled = false;
     }
+    c.sync_splits();
     rewinding_ = fast_forward_ = false;
     if (stepping) {
         const uint32_t speed = speed_input_.load(std::memory_order_relaxed);
@@ -162,7 +261,7 @@ auto EmuThread::step() -> bool {
         const uint64_t t0 = SDL_GetTicksNS();
         int ran = 1;
         if (rewinding_) {
-            rewind_frame();
+            if (rewind_frame()) step_timer();
         } else {
             ran = run_frames(fast_forward_);
         }
@@ -179,6 +278,7 @@ auto EmuThread::step() -> bool {
         frames_run_ += static_cast<uint64_t>(ran);
         c.advance_one = false;
         publish_frame();
+        c.save_splits();  // an auto rule ended an attempt, say
     } else {
         last_push_ns_ = 0;  // paused or stopped: the next frame starts a new measurement
     }
@@ -256,6 +356,7 @@ auto EmuThread::run_frames(bool fast) -> int {
     int ran = 0;
     do {
         c.emu.run_frame();
+        step_timer();
         snapshot_if_due();
         ran++;
         const auto apu = c.emu.audio_samples();
@@ -276,15 +377,15 @@ auto EmuThread::run_frames(bool fast) -> int {
 
 // One step back: the newest snapshot is loaded and one frame run from it for the picture. Its
 // audio plays reversed, or silence takes its place (the queue keeps its level either way).
-auto EmuThread::rewind_frame() -> void {
+auto EmuThread::rewind_frame() -> bool {
     Core& c = core_;
     c.frames_since_snapshot = 0;
     step_audio_.assign(kSilentFrameSamples, 0);
     step_msu_.clear();
     auto state = c.rewind.pop();
-    if (!state || !c.emu.load_snapshot(*state)) return;  // nothing (left) to go back to: hold
+    if (!state || !c.emu.load_snapshot(*state)) return false;  // nothing (left) to go back to: hold
     c.emu.run_frame();
-    if (!c.speed.rewind_reverse_audio) return;
+    if (!c.speed.rewind_reverse_audio) return true;
     auto reverse = [](std::span<const int16_t> samples, std::vector<int16_t>& out) {
         out.resize(samples.size());
         for (size_t f = 0; f + 1 < samples.size(); f += 2) {  // by stereo frame
@@ -294,6 +395,17 @@ auto EmuThread::rewind_frame() -> void {
     };
     reverse(c.emu.audio_samples(), step_audio_);
     reverse(c.emu.msu1_samples(), step_msu_);
+    return true;
+}
+
+// After every emulated frame: the timer's game time, auto rules and the "modified" check.
+auto EmuThread::step_timer() -> void {
+    Core& c = core_;
+    const speedrun::Event e = c.emu.step_timer(c.splits.timer, timer_clock());
+    if (e.action != speedrun::Action::None) {
+        utils::Logger::info(utils::LogChannel::Rom, "Timer: automatic %s (segment %d, frame %llu)",
+                            speedrun::action_label(e.action).data(), e.segment + 1, static_cast<unsigned long long>(e.frame));
+    }
 }
 
 auto EmuThread::publish_frame() -> void {
@@ -315,6 +427,17 @@ auto EmuThread::publish_frame() -> void {
         frames_published_++;
     }
     frame_cv_.notify_one();
+}
+
+auto EmuThread::publish_memory() -> void {
+    MemoryImage& image = memory_.write_buffer();
+    image.rom_path = core_.emu.rom_path();
+    image.frame = core_.emu.frame_count();
+    for (const auto& r : debug::kRegions) {
+        const std::span<const uint8_t> bytes = core_.emu.memory(r.id);
+        image.regions[static_cast<size_t>(r.id)].assign(bytes.begin(), bytes.end());
+    }
+    memory_.publish();
 }
 
 auto EmuThread::publish_status() -> void {
@@ -350,6 +473,10 @@ auto EmuThread::publish_status() -> void {
     s.rewind_enabled = c.speed.rewind;
     s.timeline_oldest_id = c.rewind.oldest_id();
     s.timeline_newest_id = c.rewind.newest_id();
+    s.watches_revision = c.emu.watches_revision();
+    s.timer = c.splits.timer;
+    s.splits_path = c.splits.file.path;
+    s.splits_error = c.splits.error;
     s.device_recording = c.audio.device_recording();
     if (s.device_recording) {
         s.device_recording_path = c.audio.device_recording_path();

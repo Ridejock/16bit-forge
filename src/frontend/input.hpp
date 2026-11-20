@@ -89,19 +89,37 @@ struct PortConfig {
 
 // Emulator hotkeys, on the keyboard (game window) and on any gamepad. A pad binding is an
 // SDL_GamepadButton, one of the two triggers (axes on XInput pads such as the F310), or none.
-enum class Hotkey : uint8_t { Rewind, FastForward, FastForwardToggle };
+// The run timer's keys default to LiveSplit's numpad layout, which no other key here uses.
+enum class Hotkey : uint8_t {
+    Rewind,
+    FastForward,
+    FastForwardToggle,
+    MemoryWatch,
+    TimerSplit,
+    TimerUndo,
+    TimerSkip,
+    TimerReset,
+    TimerPause,
+};
 inline constexpr int kPadNone = -1;
 inline constexpr int kPadTriggerLeft = SDL_GAMEPAD_BUTTON_COUNT;
 inline constexpr int kPadTriggerRight = SDL_GAMEPAD_BUTTON_COUNT + 1;
 struct HotkeyDef {
-    std::string_view name;  // also the settings key
+    std::string_view name;   // also the settings key
+    std::string_view label;  // in the Controls tab
     SDL_Keycode default_key;
     int default_pad;
 };
-inline constexpr std::array<HotkeyDef, 3> kHotkeys = {{
-    {"Rewind", SDLK_BACKSPACE, kPadTriggerLeft},
-    {"FastForward", SDLK_TAB, kPadTriggerRight},
-    {"FastForwardToggle", SDLK_GRAVE, SDL_GAMEPAD_BUTTON_RIGHT_STICK},
+inline constexpr std::array<HotkeyDef, 9> kHotkeys = {{
+    {"Rewind", "Rewind (hold)", SDLK_BACKSPACE, kPadTriggerLeft},
+    {"FastForward", "Fast-forward (hold)", SDLK_TAB, kPadTriggerRight},
+    {"FastForwardToggle", "Fast-forward (toggle)", SDLK_GRAVE, SDL_GAMEPAD_BUTTON_RIGHT_STICK},
+    {"MemoryWatch", "Memory watch (show/hide)", SDLK_M, kPadNone},
+    {"TimerSplit", "Timer: start / split", SDLK_KP_1, kPadNone},
+    {"TimerUndo", "Timer: undo split", SDLK_KP_8, kPadNone},
+    {"TimerSkip", "Timer: skip split", SDLK_KP_2, kPadNone},
+    {"TimerReset", "Timer: reset", SDLK_KP_3, kPadNone},
+    {"TimerPause", "Timer: pause", SDLK_KP_5, kPadNone},
 }};
 struct HotkeyMap {
     std::array<SDL_Keycode, kHotkeys.size()> keys{};
@@ -159,8 +177,9 @@ public:
     auto hotkeys() const -> const HotkeyMap& { return hotkeys_; }
     // Held on the keyboard or on any gamepad.
     auto hotkey_held(Hotkey h) const -> bool;
-    // A press since the last call (for toggles).
-    auto take_hotkey_press(Hotkey h) -> bool;
+    // A press since the last call (for toggles). `when_ns`, if given, gets the press's event
+    // time (SDL_GetTicksNS() clock; 0 if the caller passed none).
+    auto take_hotkey_press(Hotkey h, uint64_t* when_ns = nullptr) -> bool;
     // Press-to-bind a hotkey's pad input: the next button or trigger from any pad.
     auto start_hotkey_binding(Hotkey h) -> void { binding_.reset(); hotkey_binding_ = h; }
     auto hotkey_binding(Hotkey h) const -> bool { return hotkey_binding_ == h; }
@@ -181,8 +200,9 @@ public:
     auto scope_turbo() const -> bool { return scope_turbo_; }
     auto set_scope_turbo(bool on) -> void { scope_turbo_ = on; }
 
-    // Game-window keys. Returns true if the key belongs to pad 1 or is a hotkey.
-    auto on_key(SDL_Keycode key, bool down) -> bool;
+    // Game-window keys. Returns true if the key belongs to pad 1 or is a hotkey. `when_ns`: the
+    // event's time, for the run timer.
+    auto on_key(SDL_Keycode key, bool down, uint64_t when_ns = 0) -> bool;
     // Gamepad add/remove/button/axis events. Returns true if the event was a gamepad event.
     // While binding, the next button press from the port's pad (or any pad) is taken as the
     // new binding instead; `bound` is then set.
@@ -214,7 +234,8 @@ private:
     auto remove_device(SDL_JoystickID id) -> void;
     auto reassign() -> void;
     auto port_of(SDL_JoystickID id) const -> int;  // -1 if unassigned
-    auto on_pad_input(SDL_JoystickID id, int input, bool down, bool* bound) -> bool;  // hotkeys + hotkey binding
+    auto on_pad_input(SDL_JoystickID id, int input, bool down, bool* bound, uint64_t when_ns) -> bool;  // hotkeys + binding
+    auto note_presses(uint32_t before, uint64_t when_ns) -> void;
     auto held_hotkeys() const -> uint32_t;  // bit per Hotkey
 
     KeyMap keys_ = default_key_map();
@@ -236,6 +257,7 @@ private:
     };
     std::vector<PadInputs> pad_inputs_;
     uint32_t hotkey_presses_ = 0;
+    std::array<uint64_t, kHotkeys.size()> press_ns_{};  // when each pending press happened
     std::optional<Hotkey> hotkey_binding_;
 };
 

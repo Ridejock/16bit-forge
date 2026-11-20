@@ -2,6 +2,7 @@
 #pragma once
 #include <array>
 #include <cstddef>
+#include <span>
 #include "snes/serialize.hpp"
 #include "snes/types.hpp"
 
@@ -14,6 +15,7 @@ public:
   auto read(Address address) const -> Byte;
   auto write(Address address, Byte value) -> void;
   auto reset() -> void;
+  auto bytes() -> std::span<Byte> { return data; }
   auto serialize(Archive& ar) -> void { ar(data); }
 
 private:

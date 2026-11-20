@@ -22,6 +22,8 @@ constexpr size_t kMessageMaxChars = 64;
 constexpr uint32_t kMessageText = 0xFFF0F0F0;    // ARGB
 constexpr uint32_t kMessageShadow = 0xFF000000;  // one pixel down-right of the text
 constexpr uint32_t kMessageBox = 0xA0101010;
+constexpr int kMessageLineGap = 2;     // between the lines of a text block
+constexpr int kTimerMargin = 4;        // the timer overlay's distance from the picture's edges
 
 // Round up so an N-times window always fits N whole picture widths (8:7 is fractional).
 auto window_width(const ViewOptions& view) -> int {
@@ -53,27 +55,50 @@ auto fit_viewport(int out_w, int out_h, const ViewOptions& view, int lines) -> v
 }
 
 auto render_message(std::string_view text, int& width, int& height) -> std::vector<uint32_t> {
-    text = text.substr(0, kMessageMaxChars);
-    if (text.empty()) {
+    const TextLine line{std::string(text.substr(0, kMessageMaxChars)), kMessageText, 1};
+    return render_text_block(std::span(&line, 1), false, 0, width, height);
+}
+
+auto render_text_block(std::span<const TextLine> lines, bool align_right, int min_width, int& width, int& height)
+    -> std::vector<uint32_t> {
+    int text_w = 0;
+    int text_h = 0;
+    for (const TextLine& line : lines) {
+        text_w = std::max(text_w, static_cast<int>(line.text.size()) * kFontGlyphSize * line.scale);
+        text_h += kFontGlyphSize * line.scale;
+    }
+    if (text_w == 0) {
         width = height = 0;
         return {};
     }
+    text_h += kMessageLineGap * (static_cast<int>(lines.size()) - 1);
     // The shadow adds one pixel right and down.
-    width = static_cast<int>(text.size()) * kFontGlyphSize + 2 * kMessagePadding + 1;
-    height = kFontGlyphSize + 2 * kMessagePadding + 1;
+    width = std::max(text_w + 2 * kMessagePadding + 1, min_width);
+    height = text_h + 2 * kMessagePadding + 1;
     std::vector<uint32_t> pixels(static_cast<size_t>(width) * static_cast<size_t>(height), kMessageBox);
-    for (const auto& [offset, color] : {std::pair{1, kMessageShadow}, std::pair{0, kMessageText}}) {
-        for (size_t i = 0; i < text.size(); i++) {
-            const char c = text[i] >= kFontFirstChar && text[i] <= kFontLastChar ? text[i] : '?';
-            const auto& glyph = kFont8x8[static_cast<size_t>(c - kFontFirstChar)];
-            const int left = kMessagePadding + static_cast<int>(i) * kFontGlyphSize + offset;
-            for (int y = 0; y < kFontGlyphSize; y++) {
-                for (int x = 0; x < kFontGlyphSize; x++) {
-                    if (!((glyph[static_cast<size_t>(y)] >> x) & 1)) continue;
-                    const int row = kMessagePadding + y + offset;
-                    pixels[static_cast<size_t>(row) * static_cast<size_t>(width) + static_cast<size_t>(left + x)] = color;
+    auto plot = [&](int x, int y, int size, uint32_t color) {
+        for (int dy = 0; dy < size; dy++) {
+            for (int dx = 0; dx < size; dx++) pixels[static_cast<size_t>(y + dy) * static_cast<size_t>(width) + static_cast<size_t>(x + dx)] = color;
+        }
+    };
+    for (const auto& [offset, shadow] : {std::pair{1, true}, std::pair{0, false}}) {
+        int top = kMessagePadding;
+        for (const TextLine& line : lines) {
+            const int glyph = kFontGlyphSize * line.scale;
+            const int line_w = static_cast<int>(line.text.size()) * glyph;
+            const int left = align_right ? width - 1 - kMessagePadding - line_w : kMessagePadding;
+            for (size_t i = 0; i < line.text.size(); i++) {
+                const char c = line.text[i] >= kFontFirstChar && line.text[i] <= kFontLastChar ? line.text[i] : '?';
+                const auto& rows = kFont8x8[static_cast<size_t>(c - kFontFirstChar)];
+                for (int y = 0; y < kFontGlyphSize; y++) {
+                    for (int x = 0; x < kFontGlyphSize; x++) {
+                        if (!((rows[static_cast<size_t>(y)] >> x) & 1)) continue;
+                        plot(left + static_cast<int>(i) * glyph + x * line.scale + offset, top + y * line.scale + offset, line.scale,
+                             shadow ? kMessageShadow : line.color);
+                    }
                 }
             }
+            top += glyph + kMessageLineGap;
         }
     }
     return pixels;
@@ -111,7 +136,7 @@ auto GameWindow::create_backend(video::BackendKind wanted, const video::FilterPr
         }
     }
     backend_->set_filter(filter);
-    message_dirty_ = true;  // the new backend has no overlay yet
+    message_dirty_ = timer_dirty_ = true;  // the new backend has no overlays yet
     return true;
 }
 
@@ -158,11 +183,42 @@ auto GameWindow::present(const uint32_t* pixels, int width, int height, const Vi
     SDL_GetWindowSizeInPixels(window_, &out_w, &out_h);
     backend_->upload_frame(pixels, width, height, width * static_cast<int>(sizeof(uint32_t)));
     if (message_dirty_) {
-        backend_->upload_overlay(message_pixels_.empty() ? nullptr : message_pixels_.data(), message_w_, message_h_);
+        backend_->upload_overlay(video::OverlayLayer::Message, message_pixels_.empty() ? nullptr : message_pixels_.data(), message_w_,
+                                 message_h_);
         message_dirty_ = false;
     }
-    backend_->present(fit_viewport(out_w, out_h, view, height > 0 ? picture_lines(height) : kBaseHeight),
-                      message_placement());
+    if (timer_dirty_) {
+        backend_->upload_overlay(video::OverlayLayer::Timer, timer_pixels_.empty() ? nullptr : timer_pixels_.data(), timer_w_, timer_h_);
+        timer_dirty_ = false;
+    }
+    const video::Viewport picture = fit_viewport(out_w, out_h, view, height > 0 ? picture_lines(height) : kBaseHeight);
+    video::OverlayPlacements overlays{};
+    overlays[static_cast<size_t>(video::OverlayLayer::Message)] = message_placement();
+    overlays[static_cast<size_t>(video::OverlayLayer::Timer)] = timer_placement(picture);
+    backend_->present(picture, overlays);
+}
+
+auto GameWindow::show_timer(std::vector<uint32_t> pixels, int width, int height, Corner corner) -> void {
+    timer_corner_ = corner;
+    if (pixels == timer_pixels_ && width == timer_w_ && height == timer_h_) return;
+    timer_pixels_ = std::move(pixels);
+    timer_w_ = timer_pixels_.empty() ? 0 : width;
+    timer_h_ = timer_pixels_.empty() ? 0 : height;
+    timer_dirty_ = true;
+}
+
+// In its corner of the picture, a whole multiple of its size: about kTimerHeightShare of the
+// picture's height, at least 1x.
+auto GameWindow::timer_placement(const video::Viewport& picture) const -> video::OverlayPlacement {
+    if (timer_pixels_.empty() || picture.w <= 0 || picture.h <= 0) return {};
+    const int scale = std::max(1, static_cast<int>(static_cast<float>(picture.h) * kTimerHeightShare / static_cast<float>(timer_h_)));
+    const int w = timer_w_ * scale;
+    const int h = timer_h_ * scale;
+    const int margin = kTimerMargin * scale;
+    const CornerInfo& c = info(timer_corner_);
+    const int x = c.right ? picture.x + picture.w - w - margin : picture.x + margin;
+    const int y = c.bottom ? picture.y + picture.h - h - margin : picture.y + margin;
+    return {{x, y, w, h}, 1.0f};
 }
 
 auto GameWindow::show_message(std::string_view text) -> void {

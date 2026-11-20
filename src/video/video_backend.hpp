@@ -3,6 +3,7 @@
 #include "video/filter_preset.hpp"
 
 #include <SDL3/SDL.h>
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -20,12 +21,17 @@ struct Viewport {
     int h = 0;
 };
 
-// Where the overlay image (see VideoBackend::upload_overlay) goes, in window pixels, and how
+// Where an overlay image (see VideoBackend::upload_overlay) goes, in window pixels, and how
 // opaque it is. Its size is a whole multiple of the image's, so nearest sampling keeps it crisp.
 struct OverlayPlacement {
     Viewport rect;
     float opacity = 0.0f;  // 0 = not drawn
 };
+
+// The overlay images, each uploaded on its own and drawn over the picture in this order.
+enum class OverlayLayer : uint8_t { Timer, Message };
+inline constexpr size_t kOverlayLayerCount = 2;
+using OverlayPlacements = std::array<OverlayPlacement, kOverlayLayerCount>;  // by OverlayLayer
 
 enum class BackendKind { Gpu, Renderer };
 
@@ -49,13 +55,13 @@ public:
 
     // Copies the frame for the next present(). `pitch` is in bytes. Null clears the picture.
     virtual auto upload_frame(const uint32_t* pixels, int width, int height, int pitch) -> void = 0;
-    // Copies an overlay image (ARGB8888, straight alpha, tightly packed) for later present()s,
-    // e.g. on-screen messages. It is drawn over the picture after the filter, so no filter
-    // touches it. Null drops it.
-    virtual auto upload_overlay(const uint32_t* pixels, int width, int height) -> void = 0;
-    // Draws the last frame into `viewport` (letterboxed in black), then the overlay at
-    // `overlay`, and shows it.
-    virtual auto present(const Viewport& viewport, const OverlayPlacement& overlay) -> void = 0;
+    // Copies an overlay layer's image (ARGB8888, straight alpha, tightly packed) for later
+    // present()s, e.g. on-screen messages. It is drawn over the picture after the filter, so no
+    // filter touches it. Null drops it.
+    virtual auto upload_overlay(OverlayLayer layer, const uint32_t* pixels, int width, int height) -> void = 0;
+    // Draws the last frame into `viewport` (letterboxed in black), then each overlay layer at
+    // its placement, and shows it.
+    virtual auto present(const Viewport& viewport, const OverlayPlacements& overlays) -> void = 0;
     // Applies a filter preset. False if it could not (the backend then shows plain nearest).
     virtual auto set_filter(const FilterPreset& preset) -> bool = 0;
 

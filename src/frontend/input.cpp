@@ -196,7 +196,7 @@ auto InputManager::set_port(int port, const PortConfig& config) -> void {
     reassign();
 }
 
-auto InputManager::on_key(SDL_Keycode key, bool down) -> bool {
+auto InputManager::on_key(SDL_Keycode key, bool down, uint64_t when_ns) -> bool {
     bool matched = false;
     const uint32_t before = held_hotkeys();
     for (size_t i = 0; i < kHotkeys.size(); i++) {
@@ -204,7 +204,7 @@ auto InputManager::on_key(SDL_Keycode key, bool down) -> bool {
         key_hotkeys_ = down ? (key_hotkeys_ | 1u << i) : (key_hotkeys_ & ~(1u << i));
         matched = true;
     }
-    hotkey_presses_ |= held_hotkeys() & ~before;
+    note_presses(before, when_ns);
     for (size_t i = 0; i < kPadButtons.size(); i++) {
         if (keys_[i] != key) continue;
         keyboard_ = down ? static_cast<uint16_t>(keyboard_ | kPadButtons[i].mask)
@@ -229,15 +229,25 @@ auto InputManager::hotkey_held(Hotkey h) const -> bool {
     return std::any_of(pad_inputs_.begin(), pad_inputs_.end(), [input](const PadInputs& p) { return (p.held >> input) & 1; });
 }
 
-auto InputManager::take_hotkey_press(Hotkey h) -> bool {
+auto InputManager::take_hotkey_press(Hotkey h, uint64_t* when_ns) -> bool {
     const bool pressed = (hotkey_presses_ & bit(h)) != 0;
     hotkey_presses_ &= ~bit(h);
+    if (when_ns) *when_ns = pressed ? press_ns_[static_cast<size_t>(h)] : 0;
     return pressed;
+}
+
+// Hotkeys held now that weren't before are new presses, at `when_ns`.
+auto InputManager::note_presses(uint32_t before, uint64_t when_ns) -> void {
+    const uint32_t pressed = held_hotkeys() & ~before;
+    for (size_t i = 0; i < kHotkeys.size(); i++) {
+        if (pressed & (1u << i)) press_ns_[i] = when_ns;
+    }
+    hotkey_presses_ |= pressed;
 }
 
 // A gamepad button or trigger from any pad: the hotkeys' view, and hotkey binding. Returns true
 // when the press was taken as a binding.
-auto InputManager::on_pad_input(SDL_JoystickID id, int input, bool down, bool* bound) -> bool {
+auto InputManager::on_pad_input(SDL_JoystickID id, int input, bool down, bool* bound, uint64_t when_ns) -> bool {
     if (down && hotkey_binding_) {
         hotkeys_.pad[static_cast<size_t>(*hotkey_binding_)] = input;
         hotkey_binding_.reset();
@@ -250,7 +260,7 @@ auto InputManager::on_pad_input(SDL_JoystickID id, int input, bool down, bool* b
     if (((it->held & b) != 0) == down) return false;
     const uint32_t before = held_hotkeys();
     it->held = down ? (it->held | b) : (it->held & ~b);
-    hotkey_presses_ |= held_hotkeys() & ~before;
+    note_presses(before, when_ns);
     return false;
 }
 
@@ -300,7 +310,7 @@ auto InputManager::handle_event(const SDL_Event& event, bool* bound) -> bool {
         const bool down = event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN;
         const auto button = static_cast<SDL_GamepadButton>(event.gbutton.button);
         const int port = port_of(event.gbutton.which);
-        if (on_pad_input(event.gbutton.which, static_cast<int>(button), down, bound)) return true;
+        if (on_pad_input(event.gbutton.which, static_cast<int>(button), down, bound, event.common.timestamp)) return true;
         if (down && binding_) {
             // Take the press from the port's own pad, or from any pad if the port has none.
             const int target = binding_->port;
@@ -321,8 +331,8 @@ auto InputManager::handle_event(const SDL_Event& event, bool* bound) -> bool {
         const auto axis = static_cast<SDL_GamepadAxis>(event.gaxis.axis);
         if (axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER || axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) {
             const int input = axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER ? kPadTriggerLeft : kPadTriggerRight;
-            if (event.gaxis.value >= kTriggerPress) on_pad_input(event.gaxis.which, input, true, bound);
-            if (event.gaxis.value < kTriggerRelease) on_pad_input(event.gaxis.which, input, false, bound);
+            if (event.gaxis.value >= kTriggerPress) on_pad_input(event.gaxis.which, input, true, bound, event.common.timestamp);
+            if (event.gaxis.value < kTriggerRelease) on_pad_input(event.gaxis.which, input, false, bound, event.common.timestamp);
             return true;
         }
         if (port >= 0) mappers_[static_cast<size_t>(port)].on_axis(static_cast<SDL_GamepadAxis>(event.gaxis.axis), event.gaxis.value);

@@ -5,6 +5,8 @@
 #include "frontend/input.hpp"
 #include "frontend/rewind.hpp"
 #include "frontend/thread_sync.hpp"
+#include "speedrun/run_timer.hpp"
+#include "speedrun/splits_file.hpp"
 
 #include <array>
 #include <atomic>
@@ -12,6 +14,7 @@
 #include <cstdint>
 #include <future>
 #include <mutex>
+#include <span>
 #include <string>
 #include <thread>
 #include <type_traits>
@@ -28,6 +31,15 @@ struct FrameImage {
     int height = 0;
     uint64_t frame = 0;
     bool test_pattern = false;
+};
+
+// The game's memory as of the end of a frame, for the RAM search and memory watches. Published
+// only while the UI asks for it (set_memory_view), so it costs nothing otherwise.
+struct MemoryImage {
+    std::string rom_path;
+    uint64_t frame = 0;
+    std::array<std::vector<uint8_t>, debug::kRegions.size()> regions;  // by debug::Region
+    auto region(debug::Region r) const -> std::span<const uint8_t> { return regions[static_cast<size_t>(r)]; }
 };
 
 // What the UI shows of the emulation, copied out by the emulation thread after every frame and
@@ -64,6 +76,11 @@ struct EmuStatus {
     bool rewind_enabled = false;
     uint64_t timeline_oldest_id = 0;  // 0 when the timeline has nothing to show
     uint64_t timeline_newest_id = 0;
+    uint64_t watches_revision = 0;    // the game's watch list changed when this does
+    // The run timer (a copy: the emulation thread runs the live one) and its splits file.
+    speedrun::RunTimer timer;
+    std::string splits_path;
+    std::string splits_error;  // the last load or save problem, "" if none
 };
 
 
@@ -75,7 +92,8 @@ struct EmuStatus {
 // The UI thread talks to it only through:
 //  - commands (post: queued, run between frames; call: run between frames and wait for the
 //    result), which are the only code that touches the Core while the thread runs,
-//  - set_input() (atomics), take_frame()/frame() (triple buffer), status() (a copy under a mutex).
+//  - set_input() (atomics), take_frame()/frame() (triple buffer), status() (a copy under a mutex),
+//    take_memory()/memory() (triple buffer, while set_memory_view() is on).
 // Before start() and after stop() there is no thread: core() is then the UI's to use directly,
 // and post()/call() run the command on the calling thread.
 class EmuThread {
@@ -102,6 +120,26 @@ public:
             rewind.configure(static_cast<size_t>(speed.rewind_budget_mb) << 20, speed.rewind_interval);
             if (!speed.rewind) rewind.clear();
         }
+        // The run timer for the loaded game, stepped after every emulated frame, and the
+        // splits file it saves to whenever the run changes (see sync_splits).
+        struct Splits {
+            speedrun::RunTimer timer;
+            speedrun::SplitsFile file;
+            std::string rom;    // the game they belong to
+            std::string error;  // the last load or save problem
+        };
+        Splits splits;
+        // Opens `path` as the game's splits from now on. False (splits.error says why) if it
+        // isn't a splits file; the current splits stay.
+        auto open_splits(const std::string& path) -> bool;
+        // A new run for the game, saved at `path` (now if `write`, else once it changes).
+        auto new_splits(const std::string& path, bool write) -> void;
+        // Replaces the run (an edit) and saves it.
+        auto set_run(speedrun::Run run) -> void;
+        // Writes the run to its files if it changed.
+        auto save_splits() -> void;
+        // Another game (or none): saves the old one's run and loads the new one's last splits.
+        auto sync_splits() -> void;
     };
     using Command = std::function<void(Core&)>;
 
@@ -114,6 +152,9 @@ public:
     auto core() -> Core& { return core_; }
     // 0: run until stopped. Otherwise emulation holds once this many frames have run (smoke tests).
     auto set_exit_after_frames(uint64_t frames) -> void { exit_after_frames_ = frames; }
+    // The run timer's clock: SDL_GetTicksNS() (or an event's timestamp, on the same clock) and
+    // the wall clock for the attempt's stamps.
+    static auto timer_clock(uint64_t ticks_ns = 0) -> speedrun::Clock;
 
     auto start() -> void;
     // Finishes queued commands, then joins. Safe to call twice.
@@ -144,16 +185,25 @@ public:
 
     auto status() const -> EmuStatus;
 
+    // UI thread: publish the game's memory after every frame and command batch (on), or not.
+    // take_memory() takes the newest image, if there is one it hasn't seen (true); memory() is
+    // the last one taken.
+    auto set_memory_view(bool on) -> void { memory_view_.store(on, std::memory_order_relaxed); }
+    auto take_memory() -> bool { return memory_.acquire(); }
+    auto memory() const -> const MemoryImage& { return memory_.read_buffer(); }
+
 private:
     auto run() -> void;
     auto on_thread() const -> bool { return thread_id_.load(std::memory_order_acquire) == std::this_thread::get_id(); }
     auto step() -> bool;              // one loop pass: pause state, maybe a frame, audio service
     auto read_input() -> void;
     auto run_frames(bool fast) -> int;   // one frame, or a fast-forward batch; returns frames run
-    auto rewind_frame() -> void;         // one step back through the history
+    auto rewind_frame() -> bool;         // one step back through the history (false: none left)
+    auto step_timer() -> void;           // the run timer's per-frame hook, after each frame
     auto snapshot_if_due() -> void;
     auto publish_frame() -> void;
     auto publish_status() -> void;
+    auto publish_memory() -> void;
     auto watch_audio(uint64_t now) -> void;
     auto wait_for_audio(uint64_t deadline_ns) -> bool;
 
@@ -181,6 +231,9 @@ private:
     double fast_rate_ = 0.0;
 
     TripleBuffer<FrameImage> frames_;
+    TripleBuffer<MemoryImage> memory_;
+    std::atomic<bool> memory_view_{false};
+    bool memory_live_ = false;  // emulation thread: the view was on last pass
     std::mutex frame_mutex_;
     std::condition_variable frame_cv_;
     uint64_t frames_published_ = 0;  // under frame_mutex_

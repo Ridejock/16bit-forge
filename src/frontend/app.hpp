@@ -5,7 +5,9 @@
 #include "frontend/emulator.hpp"
 #include "frontend/game_window.hpp"
 #include "frontend/input.hpp"
+#include "frontend/memory_panel.hpp"
 #include "frontend/settings.hpp"
+#include "frontend/timer_panel.hpp"
 #include "utils/log_view.hpp"
 
 #include <SDL3/SDL.h>
@@ -93,10 +95,10 @@ private:
     auto draw_audio_panel() -> void;
     auto draw_speed_panel() -> void;
     auto draw_cheats_panel() -> void;
-    auto draw_ram_panel() -> void;
-    auto toggle_ram_panel() -> void;
-    auto save_ram_watches() -> void;
+    auto sync_cheats() -> void;  // fetches the running game's list when the game changed
     auto apply_cheats() -> void;
+    auto add_cheat(bitforge::CheatEntry entry) -> void;
+    auto toggle_memory_panel() -> void;
     auto apply_speed_settings() -> void;
     auto draw_hotkey_rows() -> void;
     auto set_core_recording(bool on, const std::string& path = {}) -> void;
@@ -168,33 +170,18 @@ private:
     bool show_audio_ = false;
     bool show_speed_ = false;
     bool show_cheats_ = false;
-    bool show_ramwatch_ = false;
-    bool ramwatch_select_ = false;  // select the RAM search tab on the frame it is opened
-    // Edits for the open game's watches. The emulation thread owns the watches themselves.
-    struct RamEdit {
-        uint32_t id = 0;
-        std::array<char, 48> label{};
-        int hold = 0;
-        bool hold_touched = false;
-        bool hold_active = false;
-        int from = 0;
-        int to = 0;
-        bool when = false;
-        float matched_until = 0.f;
-    };
-    std::vector<RamEdit> ram_edits_;
-    std::string ram_rom_;
-    std::string ram_message_;
-    bool ram_message_error_ = false;
-    int ram_domain_ = 0;
-    int ram_compare_ = 0;
-    int ram_value_ = 0;
     // The Cheats tab's copy of the running game's list (the emulation thread owns the real one).
     std::vector<bitforge::CheatEntry> cheats_;
     std::string cheats_rom_;
     std::array<char, 128> cheat_code_{};
     std::array<char, 128> cheat_description_{};
     std::string cheat_error_;
+    bool show_memory_ = false;
+    bool select_memory_ = false;  // bring the Memory tab to the front on the next frame
+    bool select_timer_ = false;   // ...and the Timer tab
+    MemoryPanel memory_panel_{emu_thread_};
+    TimerPanel timer_panel_{emu_thread_, settings_.timer};
+    auto timer_hotkey(SDL_Keycode key, uint64_t when_ns) -> bool;  // main window: a timer key, handled
     // While waiting for a key: index into kPadButtons, or kPadButtons.size() + hotkey; else -1
     // (gamepad binds live in input_).
     int binding_button_ = -1;

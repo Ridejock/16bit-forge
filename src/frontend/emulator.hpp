@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: MIT
 #pragma once
+#include "debug/memory_watch.hpp"
 #include "snes/cheats.hpp"
 #include "snes/controllers.hpp"
-#include "snes/ramwatch.hpp"
+#include "speedrun/run_timer.hpp"
 
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace bitforge {
@@ -50,7 +52,14 @@ public:
     auto loaded() const -> bool { return system_ != nullptr; }
     auto rom_path() const -> const std::string& { return rom_path_; }
     auto rom_name() const -> const std::string& { return rom_name_; }
+    auto rom_stem() const -> std::string;  // the ROM's file name without its extension
     auto frame_count() const -> uint64_t { return frames_; }
+    // What last moved frame_count() other than a frame (a reset, a state load, a rewind or
+    // timeline jump), cleared by the call: the run timer keeps game time and auto-splits right.
+    auto take_jump() -> speedrun::Jump { return std::exchange(jump_, speedrun::Jump::None); }
+    // The frame rate game time counts at. The core runs NTSC timing (262 lines) for every
+    // cartridge, so this is NTSC until PAL timing is emulated.
+    auto video_standard() const -> speedrun::VideoStandard { return speedrun::VideoStandard::Ntsc; }
 
     // XRGB8888, row-major, width() * height() pixels. Always valid while loaded. The size can
     // change between frames (256/512 x 224/239/448/478); the video backends rebuild on a change.
@@ -112,33 +121,30 @@ public:
     // Applies the list (enabled entries, from the next bus read) and writes the file.
     auto set_cheats(std::vector<CheatEntry> entries) -> bool;
 
-    // ---- Watches: watches/<rom>.wch, loaded at boot. Freezes are not in the file. -----------
-    struct MemorySearchView {
-        bool searching = false;
-        WatchDomain domain = WatchDomain::Wram;
-        uint32_t candidates = 0;
-        struct Hit {
-            uint32_t offset = 0;
-            uint8_t value = 0;
-        };
-        std::vector<Hit> hits;  // empty when there are too many to list
-        std::size_t sram_bytes = 0;
-        std::vector<Watch> watches;
-        RunMarks marks;
-    };
-    auto watches() -> RamWatch&;
-    auto watches() const -> const RamWatch&;
+    // ---- Memory watches: watches/<rom>.wch, loaded at boot ---------------------------------
+    // Frozen watches are written at the start of every frame (as Pro Action Replay codes are),
+    // so they hold through rewind, timeline jumps and state loads. Freezes last until the game
+    // is closed: the file keeps the watches, and they load unfrozen.
     auto watches_path() const -> std::string;
-    auto save_watches() -> bool;
-    auto region_bytes(WatchDomain domain) -> std::vector<uint8_t>;
-    auto memory_view(uint32_t hit_limit = 32) -> MemorySearchView;
-    auto run_marks() const -> RunMarks;
-    auto peek_wram(uint32_t offset) const -> uint8_t;
-    // Pokes the watch's bytes once and marks the run as hand-edited.
-    auto edit_watch(uint32_t id, uint32_t value) -> bool;
-    // Freezes (and writes now, so a paused game changes immediately) or clears the freeze.
-    auto freeze_watch(uint32_t id, bool frozen, uint32_t value) -> bool;
-    auto set_watch_size(uint32_t id, uint8_t size) -> bool;
+    auto watches() const -> const std::vector<debug::Watch>& { return watches_; }
+    // Counts changes to the list (a load, set_watches), so the UI's copies know to refetch it.
+    auto watches_revision() const -> uint64_t { return watches_revision_; }
+    // Applies the list (frozen values are written right away) and writes the file.
+    auto set_watches(std::vector<debug::Watch> entries) -> bool;
+    // A region's memory (WRAM, or the cartridge's SRAM; empty when there is none or no game).
+    auto memory(debug::Region region) -> std::span<uint8_t>;
+    // One write of `value` at `offset` (a watch edit). False if it doesn't fit the region.
+    auto write_memory(debug::Region region, uint32_t offset, debug::ValueSize size, uint32_t value) -> bool;
+    // Every watch read once at the end of each frame, on this (the emulation) thread: the hook
+    // for a run timer or auto-splitter. A state load, rewind or reset starts the readings over
+    // (before == now), so a jump never looks like a change.
+    auto watch_readings() const -> std::span<const debug::WatchReading> { return readings_; }
+    auto evaluate(const debug::Condition& condition) const -> bool;
+    // debug::TamperBits: a frozen watch, an enabled cheat, a hand edit since the game loaded.
+    auto memory_tampered() const -> uint32_t;
+    // The run timer's per-frame hook: call after every run_frame(). Game time and the
+    // auto-split rules see this frame's readings and whatever jump came before it.
+    auto step_timer(speedrun::RunTimer& timer, const speedrun::Clock& now) -> speedrun::Event;
 
     // Stereo int16 frames (L, R, L, R, ...) the last run_frame() produced, at audio_sample_rate().
     auto audio_samples() const -> std::span<const int16_t>;
@@ -152,10 +158,18 @@ private:
     auto load_sram() -> void;
     auto load_cheats() -> void;
     auto load_watches() -> void;
-    auto rom_stem() const -> std::string;
+    auto apply_freezes() -> void;
+    auto region_memory() -> debug::RegionMemory;
+    auto sample_watches() -> void;
 
     std::unique_ptr<System> system_;
     std::vector<CheatEntry> cheats_;
+    std::vector<debug::Watch> watches_;
+    std::vector<debug::WatchReading> readings_;       // this frame's
+    std::vector<debug::WatchReading> last_readings_;  // last frame's (kept to reuse its storage)
+    bool poked_ = false;                              // a hand edit since the game loaded
+    uint64_t watches_revision_ = 0;
+    speedrun::Jump jump_ = speedrun::Jump::None;
     std::string data_dir_;
     std::string last_error_;
     std::string last_warning_;

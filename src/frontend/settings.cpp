@@ -172,6 +172,20 @@ auto Settings::load(const std::string& path) -> void {
                     if (const auto input = parse_pad_input(value)) hotkeys.pad[i] = *input;
                 }
             }
+        } else if (section == "timer") {
+            if (key == "primary") {
+                for (const auto& m : speedrun::kMethods) {
+                    if (value == m.key) timer.primary = m.id;
+                }
+            } else if (key == "overlay") {
+                timer.overlay = parse_bool(value);
+            } else if (key == "corner") {
+                for (size_t i = 0; i < kCorners.size(); i++) {
+                    if (value == kCorners[i].id) timer.corner = static_cast<Corner>(i);
+                }
+            } else if (key == "show") {
+                show_timer = parse_bool(value);
+            }
         } else if (section == "keys") {
             for (size_t i = 0; i < kPadButtons.size(); i++) {
                 if (key != kPadButtons[i].name) continue;
@@ -222,6 +236,12 @@ auto Settings::save(const std::string& path) const -> bool {
             << kHotkeys[i].name << ".pad=" << pad_input_id(hotkeys.pad[i]) << "\n";
     }
     out << "\n";
+
+    out << "[timer]\n"
+        << "primary=" << speedrun::info(timer.primary).key << "\n"
+        << "overlay=" << (timer.overlay ? 1 : 0) << "\n"
+        << "corner=" << info(timer.corner).id << "\n"
+        << "show=" << (show_timer ? 1 : 0) << "\n\n";
 
     out << "[recent]\n";
     for (size_t i = 0; i < recent_roms.size(); i++) {

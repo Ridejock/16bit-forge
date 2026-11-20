@@ -3,7 +3,9 @@
 #include "video/video_backend.hpp"
 
 #include <SDL3/SDL.h>
+#include <array>
 #include <cstdint>
+#include <span>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -17,9 +19,33 @@ struct ViewOptions {
     bool aspect_8_7;
 };
 
+// Where the run timer's overlay sits on the picture.
+enum class Corner : uint8_t { TopLeft, TopRight, BottomLeft, BottomRight };
+struct CornerInfo {
+    std::string_view id;     // settings value
+    std::string_view label;  // UI
+    bool right;
+    bool bottom;
+};
+inline constexpr std::array<CornerInfo, 4> kCorners = {{
+    {"top_left", "Top left", false, false},
+    {"top_right", "Top right", true, false},
+    {"bottom_left", "Bottom left", false, true},
+    {"bottom_right", "Bottom right", true, true},
+}};
+inline auto info(Corner c) -> const CornerInfo& { return kCorners[static_cast<size_t>(c)]; }
+
+// One line of an overlay's text, in the 8x8 font: its colour (ARGB) and glyph size (1 = 8x8).
+struct TextLine {
+    std::string text;
+    uint32_t color = 0;
+    int scale = 1;
+};
+
 // The client window that shows the emulated picture. It owns one video backend (SDL_GPU or
 // SDL_Renderer) and only decides where the picture goes; the backend draws it. It also shows
-// short on-screen messages (show_message) over the picture, drawn after the filter.
+// short on-screen messages (show_message) and the run timer (show_timer) over the picture, drawn
+// after the filter.
 class GameWindow {
 public:
     // The picture is 256 x 224 base pixels. Frames come in 256 or 512 wide (hi-res) and 224 or
@@ -32,6 +58,8 @@ public:
     // On-screen messages: fully shown for kMessageHoldNs, then faded out over kMessageFadeNs.
     static constexpr uint64_t kMessageHoldNs = 2'000'000'000;
     static constexpr uint64_t kMessageFadeNs = 250'000'000;
+    // The timer overlay is scaled in whole steps to about this share of the picture's height.
+    static constexpr float kTimerHeightShare = 0.16f;
 
     GameWindow() = default;
     GameWindow(const GameWindow&) = delete;
@@ -64,11 +92,15 @@ public:
     // Shows `text` (ASCII; anything else draws as '?') in the top-left corner in the 8x8 debug
     // font, replacing any current message. Empty text clears it.
     auto show_message(std::string_view text) -> void;
+    // Shows an image (ARGB8888, w x h; empty hides it) as the run timer overlay in `corner` of
+    // the picture, scaled with it. Re-sent to the backend only when it changes.
+    auto show_timer(std::vector<uint32_t> pixels, int width, int height, Corner corner) -> void;
 
 private:
     auto create_backend(video::BackendKind wanted, const video::FilterPreset& filter) -> bool;
     // Where the message goes this frame and how opaque it is (0 once it has faded out).
     auto message_placement() -> video::OverlayPlacement;
+    auto timer_placement(const video::Viewport& picture) const -> video::OverlayPlacement;
 
     SDL_Window* window_ = nullptr;
     std::unique_ptr<video::VideoBackend> backend_;
@@ -80,6 +112,12 @@ private:
     int message_h_ = 0;
     uint64_t message_start_ns_ = 0;
     bool message_dirty_ = false;
+
+    std::vector<uint32_t> timer_pixels_;  // the timer overlay, as message_pixels_
+    int timer_w_ = 0;
+    int timer_h_ = 0;
+    Corner timer_corner_ = Corner::TopRight;
+    bool timer_dirty_ = false;
 };
 
 // Display width of the picture in base pixels, with or without the 8:7 pixel aspect.
@@ -97,5 +135,9 @@ auto fit_viewport(int out_w, int out_h, const ViewOptions& view, int lines = Gam
 // Draws `text` in the 8x8 font as an ARGB8888 image (straight alpha): light text with a dark
 // drop shadow on a translucent dark box. Sets `width`/`height`; empty text gives an empty image.
 auto render_message(std::string_view text, int& width, int& height) -> std::vector<uint32_t>;
+// The same look for several lines, each in its own colour and size, left- or right-aligned in
+// a box at least `min_width` pixels wide (so a changing number doesn't make the box jump).
+auto render_text_block(std::span<const TextLine> lines, bool align_right, int min_width, int& width, int& height)
+    -> std::vector<uint32_t>;
 
 } // namespace bitforge::frontend

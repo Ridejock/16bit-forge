@@ -87,11 +87,13 @@ auto Emulator::load(const std::string& path) -> bool {
     load_sram();
     load_cheats();
     load_watches();
+    poked_ = false;
     auto [w, h] = system_->get_framebuffer_size();
     width_ = w;
     height_ = h;
     test_pattern_.assign(static_cast<size_t>(width_) * static_cast<size_t>(height_), kBlack);
     frames_ = 0;
+    jump_ = speedrun::Jump::Reset;
     seen_output_ = false;
     update_test_pattern();
     utils::Logger::info(utils::LogChannel::Rom, "Booted %s", rom_name_.c_str());
@@ -110,12 +112,16 @@ auto Emulator::reset() -> void {
     if (!system_) return;
     system_->reset();
     frames_ = 0;
+    jump_ = speedrun::Jump::Reset;
+    readings_.clear();
 }
 
 auto Emulator::run_frame() -> void {
     if (!system_) return;
+    apply_freezes();
     system_->run_frame();
     frames_++;
+    sample_watches();
     if (frames_ % kSramFlushFrames == 0) flush_sram();
 
     // The core picks its picture size per frame (hi-res, interlace, overscan); the test
@@ -209,6 +215,8 @@ auto Emulator::load_state(int slot) -> std::string {
         return why;
     }
     frames_ = info.frame;
+    jump_ = speedrun::Jump::Load;
+    readings_.clear();
     const auto [w, h] = system_->get_framebuffer_size();
     width_ = w;
     height_ = h;
@@ -231,6 +239,8 @@ auto Emulator::load_snapshot(std::span<const uint8_t> data) -> bool {
     if (!system_->load_state(data.subspan(sizeof(uint64_t)))) return false;
     frames_ = 0;
     for (size_t i = 0; i < sizeof(uint64_t); i++) frames_ |= static_cast<uint64_t>(data[i]) << (8 * i);
+    jump_ = speedrun::Jump::Rewind;
+    readings_.clear();
     const auto [w, h] = system_->get_framebuffer_size();
     width_ = w;
     height_ = h;
@@ -331,99 +341,74 @@ auto Emulator::watches_path() const -> std::string {
     return (fs::path(data_dir_) / kWatchesFolder / (rom_stem() + ".wch")).string();
 }
 
-auto Emulator::watches() -> RamWatch& { return system_->watches(); }
-
-auto Emulator::watches() const -> const RamWatch& { return system_->watches(); }
-
 auto Emulator::load_watches() -> void {
+    watches_.clear();
+    readings_.clear();
+    watches_revision_++;
     if (const auto data = read_file(watches_path())) {
-        system_->watches().parse(std::string_view(reinterpret_cast<const char*>(data->data()), data->size()));
-        utils::Logger::info(utils::LogChannel::Rom, "Watches: %zu loaded (%s)", system_->watches().list().size(),
-                            watches_path().c_str());
+        watches_ = debug::parse_watch_file(std::string_view(reinterpret_cast<const char*>(data->data()), data->size()));
+        utils::Logger::info(utils::LogChannel::Rom, "Memory watches: %zu loaded (%s)", watches_.size(), watches_path().c_str());
     }
 }
 
-auto Emulator::save_watches() -> bool {
+auto Emulator::set_watches(std::vector<debug::Watch> entries) -> bool {
     if (!system_) return false;
+    watches_ = std::move(entries);
+    debug::assign_watch_ids(watches_);
+    watches_revision_++;
+    apply_freezes();
     const std::string path = watches_path();
     std::error_code ec;
-    if (system_->watches().list().empty() && !fs::exists(path, ec)) return true;
-    const std::string text = system_->watches().format();
+    if (watches_.empty() && !fs::exists(path, ec)) return true;
+    const std::string text = debug::format_watch_file(watches_);
     return write_file(path, std::span(reinterpret_cast<const uint8_t*>(text.data()), text.size()));
 }
 
-auto Emulator::region_bytes(WatchDomain domain) -> std::vector<uint8_t> {
+auto Emulator::memory(debug::Region region) -> std::span<uint8_t> {
     if (!system_) return {};
-    return system_->copy_memory(domain);
+    return region == debug::Region::Wram ? system_->wram() : system_->sram();
 }
 
-auto Emulator::memory_view(uint32_t hit_limit) -> MemorySearchView {
-    MemorySearchView view;
-    if (!system_) return view;
-    const RamWatch& ram = system_->watches();
-    view.searching = ram.searching();
-    view.domain = ram.search_domain();
-    view.candidates = ram.candidate_count();
-    view.sram_bytes = system_->sram().size();
-    view.watches.assign(ram.list().begin(), ram.list().end());
-    view.marks = ram.marks();
-    if (view.searching && view.candidates > 0 && view.candidates <= hit_limit) {
-        for (const uint32_t offset : ram.first_candidates(hit_limit)) {
-            const std::optional<uint8_t> byte = system_->read_memory(view.domain, offset);
-            if (byte) view.hits.push_back({offset, *byte});
-        }
-    }
-    return view;
-}
-
-auto Emulator::run_marks() const -> RunMarks {
-    return system_ ? system_->watches().marks() : RunMarks{};
-}
-
-auto Emulator::peek_wram(uint32_t offset) const -> uint8_t {
-    return system_ ? system_->peek_wram(offset) : 0;
-}
-
-auto Emulator::edit_watch(uint32_t id, uint32_t value) -> bool {
-    if (!system_) return false;
-    const Watch* watch = system_->watches().find(id);
-    if (!watch) return false;
-    const WatchDomain domain = watch->domain;
-    const uint32_t offset = watch->offset;
-    const uint8_t size = watch->size;
-    bool wrote = false;
-    for (uint8_t i = 0; i < size; ++i) {
-        wrote = system_->write_memory(domain, offset + i, static_cast<uint8_t>((value >> (8 * i)) & 0xFF)) || wrote;
-    }
-    if (wrote) system_->watches().note_hand_edit();
-    return wrote;
-}
-
-auto Emulator::freeze_watch(uint32_t id, bool frozen, uint32_t value) -> bool {
-    if (!system_) return false;
-    const Watch* watch = system_->watches().find(id);
-    if (!watch) return false;
-    const WatchDomain domain = watch->domain;
-    const uint32_t offset = watch->offset;
-    const uint8_t size = watch->size;
-    if (!frozen) return system_->watches().set_frozen(id, false, value);
-    bool wrote = false;
-    for (uint8_t i = 0; i < size; ++i) {
-        wrote = system_->write_memory(domain, offset + i, static_cast<uint8_t>((value >> (8 * i)) & 0xFF)) || wrote;
-    }
-    if (!wrote) return false;
-    system_->watches().set_frozen(id, true, value);
-    system_->watches().note_freeze_applied();
+auto Emulator::write_memory(debug::Region region, uint32_t offset, debug::ValueSize size, uint32_t value) -> bool {
+    if (!debug::write_value(memory(region), offset, size, value)) return false;
+    if (region == debug::Region::Sram) system_->mark_sram_dirty();  // so the battery file follows
+    poked_ = true;
     return true;
 }
 
-auto Emulator::set_watch_size(uint32_t id, uint8_t size) -> bool {
-    if (!system_) return false;
-    const Watch* watch = system_->watches().find(id);
-    if (!watch) return false;
-    if (watch->domain == WatchDomain::Sram && static_cast<std::size_t>(watch->offset) + size > system_->sram().size()) return false;
-    if (!system_->watches().set_size(id, size)) return false;
-    return save_watches();
+auto Emulator::evaluate(const debug::Condition& condition) const -> bool {
+    return debug::evaluate(condition, watches_, readings_);
+}
+
+auto Emulator::memory_tampered() const -> uint32_t {
+    uint32_t bits = 0;
+    if (debug::any_frozen(watches_)) bits |= debug::kTamperFreeze;
+    if (std::any_of(cheats_.begin(), cheats_.end(), [](const CheatEntry& c) { return c.enabled; })) bits |= debug::kTamperCheat;
+    if (poked_) bits |= debug::kTamperPoke;
+    return bits;
+}
+
+auto Emulator::step_timer(speedrun::RunTimer& timer, const speedrun::Clock& now) -> speedrun::Event {
+    const speedrun::FrameInfo frame{frames_, take_jump(), memory_tampered(), now};
+    return timer.on_frame(frame, [this](const debug::Condition& c) { return evaluate(c); });
+}
+
+auto Emulator::region_memory() -> debug::RegionMemory {
+    debug::RegionMemory regions;
+    for (const auto& r : debug::kRegions) regions[static_cast<size_t>(r.id)] = memory(r.id);
+    return regions;
+}
+
+auto Emulator::sample_watches() -> void {
+    if (watches_.empty() && readings_.empty()) return;
+    std::swap(readings_, last_readings_);
+    debug::sample_watches(watches_, region_memory(), last_readings_, readings_);
+}
+
+auto Emulator::apply_freezes() -> void {
+    if (watches_.empty()) return;
+    const uint32_t changed = debug::apply_freezes(watches_, region_memory());
+    if (changed & (1u << static_cast<uint32_t>(debug::Region::Sram))) system_->mark_sram_dirty();
 }
 
 auto Emulator::rtc_path() const -> std::string {

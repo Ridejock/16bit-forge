@@ -13,6 +13,7 @@
 #include "test_rom.hpp"
 #include "frontend/emu_thread.hpp"
 #include "frontend/thread_sync.hpp"
+#include "speedrun/autosplit.hpp"
 #include "utils/logging.hpp"
 
 #include <SDL3/SDL.h>
@@ -282,6 +283,157 @@ auto boot(EmuThread& emu, const std::string& rom) -> bool {
     return true;
 }
 
+// The memory image: nothing is published until the UI asks, then one per frame (and after a
+// command batch, so an edit shows while paused); writes and freezes go through the command
+// queue while the UI thread reads every byte of each image (ThreadSanitizer checks the handoff).
+volatile uint32_t g_memory_sink = 0;
+
+auto test_memory_view() -> void {
+    using bitforge::debug::Region;
+    using bitforge::debug::ValueSize;
+    constexpr uint32_t kEdit = 0x1F000;
+    constexpr uint32_t kFrozen = 0x1F010;
+    constexpr uint64_t kTimeoutNs = 5'000'000'000ULL;
+    EmuThread emu;
+    emu.core().emu.set_data_dir((std::filesystem::temp_directory_path() / "snes_thread_tests_memory").string());
+    const std::string rom = test_rom::write_test_rom(0);
+    emu.start();
+    CHECK(boot(emu, rom));
+    // Off: no images.
+    emu.call([](EmuThread::Core&) {});
+    SDL_DelayNS(50'000'000);
+    CHECK(!emu.take_memory());
+
+    emu.set_memory_view(true);
+    auto wait_for = [&emu](auto&& done) {
+        const uint64_t until = SDL_GetTicksNS() + kTimeoutNs;
+        uint64_t images = 0;
+        while (SDL_GetTicksNS() < until) {
+            if (emu.take_memory()) {
+                images++;
+                const MemoryImage& m = emu.memory();
+                uint32_t sum = 0;
+                for (const uint8_t b : m.region(Region::Wram)) sum += b;  // read every byte
+                g_memory_sink = sum;
+                if (done(m)) return images;
+            }
+            SDL_DelayNS(1'000'000);
+        }
+        return uint64_t{0};
+    };
+    uint64_t first_frame = 0;
+    CHECK(wait_for([&](const MemoryImage& m) {
+        first_frame = m.frame;
+        return m.rom_path == rom && m.region(Region::Wram).size() == bitforge::debug::kWramBytes && m.frame > 10;
+    }) > 0);
+
+    // A one-shot write and a freeze while running.
+    emu.post([](EmuThread::Core& c) { c.emu.write_memory(Region::Wram, kEdit, ValueSize::Bits8, 0xA5); });
+    emu.post([](EmuThread::Core& c) {
+        c.emu.set_watches({{"HP", Region::Wram, kFrozen, {ValueSize::Bits16, bitforge::debug::Format::Hex}, true, 0xBEEF}});
+    });
+    uint64_t later_frame = 0;
+    CHECK(wait_for([&](const MemoryImage& m) {
+        later_frame = m.frame;
+        const auto w = m.region(Region::Wram);
+        return w[kEdit] == 0xA5 && bitforge::debug::read_value(w, kFrozen, ValueSize::Bits16) == 0xBEEF;
+    }) > 0);
+    CHECK(later_frame > first_frame);
+
+    // Paused: an edit still shows (the command batch publishes).
+    emu.call([](EmuThread::Core& c) { c.state = RunState::Paused; });
+    emu.post([](EmuThread::Core& c) { c.emu.write_memory(Region::Wram, kEdit, ValueSize::Bits8, 0x5A); });
+    CHECK(wait_for([](const MemoryImage& m) { return m.region(Region::Wram)[kEdit] == 0x5A; }) > 0);
+
+    // Off again: publishing stops.
+    emu.call([](EmuThread::Core& c) { c.state = RunState::Running; });
+    emu.set_memory_view(false);
+    emu.call([](EmuThread::Core&) {});
+    emu.call([](EmuThread::Core&) {});
+    emu.take_memory();
+    SDL_DelayNS(100'000'000);
+    CHECK(!emu.take_memory());
+    emu.stop();
+}
+
+// The run timer on the emulation thread: an edited run is saved with its rules (their watch
+// joins the game's list), auto-start and auto-splits fire from the frame hook, holding the rewind
+// hotkey back past a split undoes it and playing on splits it once (game time exact), and a
+// reset with a first PB waits for the answer, then lands in the .lss. The UI side only reads
+// status copies, so ThreadSanitizer checks the handoff of the timer and its shared run.
+auto test_run_timer() -> void {
+    namespace sr = bitforge::speedrun;
+    using bitforge::debug::Region;
+    constexpr uint32_t kCounter = 0x0000;  // the test ROM's 8-bit frame counter
+    constexpr uint32_t kStartAt = 20, kFirstSplit = 80, kSecondSplit = 140;
+    constexpr uint64_t kTimeoutNs = 20'000'000'000ULL;  // generous: ThreadSanitizer is slow
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "snes_thread_tests_timer";
+    std::filesystem::remove_all(dir);
+    EmuThread emu;
+    emu.core().emu.set_data_dir(dir.string());
+    emu.core().speed.rewind = true;
+    emu.core().speed.rewind_interval = 1;
+    emu.core().apply_speed();
+    const std::string rom = test_rom::write_test_rom(0);
+    emu.start();
+    CHECK(boot(emu, rom));
+    auto wait_for = [&emu](auto&& done) {
+        const uint64_t until = SDL_GetTicksNS() + kTimeoutNs;
+        while (SDL_GetTicksNS() < until) {
+            const EmuStatus st = emu.status();
+            if (done(st)) return true;
+            SDL_DelayNS(1'000'000);
+        }
+        return false;
+    };
+    CHECK(wait_for([](const EmuStatus& st) { return !st.splits_path.empty(); }));
+    const EmuStatus booted = emu.status();
+    // Pause while the run is set, so the counter can't pass the start before the rules exist.
+    emu.call([](EmuThread::Core& c) { c.state = RunState::Paused; });
+    const bitforge::debug::Watch counter{"Counter", Region::Wram, kCounter, {}, false, 0, 0};
+    sr::Run run = sr::make_run("Test", "Any%", 2);
+    run.auto_start = sr::Rule{{1, bitforge::debug::Test::ChangedTo, kStartAt}, counter};
+    run.segments[0].auto_split = sr::Rule{{1, bitforge::debug::Test::ChangedTo, kFirstSplit}, counter};
+    run.segments[1].auto_split = sr::Rule{{1, bitforge::debug::Test::ChangedTo, kSecondSplit}, counter};
+    emu.call([&run](EmuThread::Core& c) {
+        c.emu.write_memory(Region::Wram, kCounter, bitforge::debug::ValueSize::Bits8, 0);
+        c.set_run(run);
+        c.state = RunState::Running;
+    });
+    const EmuStatus set = emu.status();
+    CHECK(set.watches_revision > booted.watches_revision);
+    CHECK(std::filesystem::exists(set.splits_path) && std::filesystem::exists(sr::autosplit_path(set.splits_path)));
+
+    // Auto-start, then the first split.
+    CHECK(wait_for([](const EmuStatus& st) { return st.timer.current() == 1; }));
+    // Hold rewind until the split is undone, then play on: it splits again, once.
+    emu.set_speed_input(true, false);
+    CHECK(wait_for([](const EmuStatus& st) { return st.timer.current() == 0 && st.timer.state() == sr::TimerState::Running; }));
+    emu.set_speed_input(false, false);
+    CHECK(wait_for([](const EmuStatus& st) { return st.timer.state() == sr::TimerState::Ended; }));
+    const EmuStatus ended = emu.status();
+    CHECK(ended.timer.current() == 2);
+    // Game time is the frames between the triggers, whatever the rewind did.
+    CHECK(ended.timer.splits()[0].game == sr::frames_to_nanos(kFirstSplit - kStartAt, sr::VideoStandard::Ntsc));
+    CHECK(ended.timer.splits()[1].game == sr::frames_to_nanos(kSecondSplit - kStartAt, sr::VideoStandard::Ntsc));
+
+    // Reset: a first finish is a PB, kept only once the prompt says so.
+    emu.post([](EmuThread::Core& c) { c.splits.timer.reset(EmuThread::timer_clock()); });
+    CHECK(wait_for([](const EmuStatus& st) { return st.timer.pending(); }));
+    emu.post([](EmuThread::Core& c) { c.splits.timer.resolve_pending(true); });
+    CHECK(wait_for([](const EmuStatus& st) { return !st.timer.pending(); }));
+    emu.stop();
+    const auto saved = sr::load_splits(ended.splits_path);
+    CHECK(saved.has_value());
+    if (saved) {
+        CHECK(saved->run.attempt_count == 1 && sr::completed_runs(saved->run) == 1);
+        // (the file keeps 100 ns ticks)
+        CHECK(sr::format_timespan(saved->run.segments[1].pb.game.value_or(0)) == sr::format_timespan(ended.timer.splits()[1].game.value_or(-1)));
+        CHECK(saved->run.segments[0].auto_split.has_value() && saved->run.auto_start.has_value());
+    }
+    std::filesystem::remove_all(dir);
+}
+
 // stall_emulation: the stalls happen on the emulation thread instead (a command that blocks):
 // what the single-threaded loop did. That must underrun (control: the harness can see it).
 // speed_script: after audio grace, a normal-speed baseline and a fast-forward run of the same
@@ -495,6 +647,8 @@ int main() {
         {"command queue: order, closed fallback", test_queue_basics},
         {"command queue: two producers, one worker", test_queue_threads},
         {"emu thread: call/post, inline, nested, restart", test_emu_calls},
+        {"emu thread: memory image, writes, freezes", test_memory_view},
+        {"emu thread: run timer, auto-splits, rewind, splits file", test_run_timer},
         {"harness: UI stalls 170 ms, timer pacing", test_harness_timer},
         {"harness: UI stalls 170 ms, audio-sync pacing", test_harness_audio_sync},
         {"harness: same stalls on the emu thread (control)", test_harness_control},

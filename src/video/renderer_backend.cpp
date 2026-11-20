@@ -22,10 +22,12 @@ auto RendererBackend::create(SDL_Window* window) -> bool {
 
 auto RendererBackend::destroy() -> void {
     if (texture_) SDL_DestroyTexture(texture_);
-    if (overlay_) SDL_DestroyTexture(overlay_);
+    for (Overlay& overlay : overlays_) {
+        if (overlay.texture) SDL_DestroyTexture(overlay.texture);
+        overlay = Overlay{};
+    }
     if (renderer_) SDL_DestroyRenderer(renderer_);
     texture_ = nullptr;
-    overlay_ = nullptr;
     renderer_ = nullptr;
     tex_width_ = 0;
     tex_height_ = 0;
@@ -53,18 +55,24 @@ auto RendererBackend::upload_frame(const uint32_t* pixels, int width, int height
                  SDL_UpdateTexture(texture_, nullptr, pixels, pitch);
 }
 
-auto RendererBackend::upload_overlay(const uint32_t* pixels, int width, int height) -> void {
-    if (overlay_) SDL_DestroyTexture(overlay_);
-    overlay_ = nullptr;
-    if (!renderer_ || !pixels || width <= 0 || height <= 0) return;
-    overlay_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, width, height);
-    if (!overlay_) return;
-    SDL_UpdateTexture(overlay_, nullptr, pixels, width * static_cast<int>(sizeof(uint32_t)));
-    SDL_SetTextureBlendMode(overlay_, SDL_BLENDMODE_BLEND);
-    SDL_SetTextureScaleMode(overlay_, SDL_SCALEMODE_NEAREST);
+auto RendererBackend::upload_overlay(OverlayLayer layer, const uint32_t* pixels, int width, int height) -> void {
+    Overlay& overlay = overlays_[static_cast<size_t>(layer)];
+    const bool keep = overlay.texture && pixels && width == overlay.w && height == overlay.h;
+    if (!keep) {
+        if (overlay.texture) SDL_DestroyTexture(overlay.texture);
+        overlay = Overlay{};
+        if (!renderer_ || !pixels || width <= 0 || height <= 0) return;
+        overlay.texture = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, width, height);
+        if (!overlay.texture) return;
+        SDL_SetTextureBlendMode(overlay.texture, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(overlay.texture, SDL_SCALEMODE_NEAREST);
+        overlay.w = width;
+        overlay.h = height;
+    }
+    SDL_UpdateTexture(overlay.texture, nullptr, pixels, width * static_cast<int>(sizeof(uint32_t)));
 }
 
-auto RendererBackend::present(const Viewport& viewport, const OverlayPlacement& overlay) -> void {
+auto RendererBackend::present(const Viewport& viewport, const OverlayPlacements& overlays) -> void {
     if (!renderer_) return;
     SDL_SetRenderDrawColor(renderer_, 0, 0, 0, SDL_ALPHA_OPAQUE);
     SDL_RenderClear(renderer_);
@@ -73,11 +81,14 @@ auto RendererBackend::present(const Viewport& viewport, const OverlayPlacement& 
                             static_cast<float>(viewport.w), static_cast<float>(viewport.h)};
         SDL_RenderTexture(renderer_, texture_, nullptr, &dst);
     }
-    if (overlay_ && overlay.opacity > 0.0f) {
-        const SDL_FRect dst{static_cast<float>(overlay.rect.x), static_cast<float>(overlay.rect.y),
-                            static_cast<float>(overlay.rect.w), static_cast<float>(overlay.rect.h)};
-        SDL_SetTextureAlphaModFloat(overlay_, overlay.opacity);
-        SDL_RenderTexture(renderer_, overlay_, nullptr, &dst);
+    for (size_t i = 0; i < overlays_.size(); i++) {
+        const OverlayPlacement& place = overlays[i];
+        SDL_Texture* texture = overlays_[i].texture;
+        if (!texture || place.opacity <= 0.0f) continue;
+        const SDL_FRect dst{static_cast<float>(place.rect.x), static_cast<float>(place.rect.y), static_cast<float>(place.rect.w),
+                            static_cast<float>(place.rect.h)};
+        SDL_SetTextureAlphaModFloat(texture, place.opacity);
+        SDL_RenderTexture(renderer_, texture, nullptr, &dst);
     }
     if (const auto path = take_screenshot_request()) {
         SDL_Surface* shot = SDL_RenderReadPixels(renderer_, nullptr);

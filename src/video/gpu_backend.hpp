@@ -12,7 +12,8 @@ namespace bitforge::video {
 // through intermediate render targets. The last pass draws into the letterboxed viewport. A pass
 // reads the previous pass's output, plus any extra inputs it names (the emulator frame or an
 // earlier pass's output), and gets the preset's values for its shader's parameters. The overlay
-// (on-screen messages) is drawn last, alpha-blended into its own viewport.
+// layers (run timer, on-screen messages) are drawn last, each alpha-blended into its own
+// viewport.
 // Device, swapchain, upload, pass-chain and screenshot code follow Emerald's Renderer,
 // Texture and PostChain (MIT, Ervin Ashley); see gpu_backend.cpp.
 class GpuBackend final : public VideoBackend {
@@ -22,8 +23,8 @@ public:
     auto create(SDL_Window* window) -> bool override;
     auto destroy() -> void override;
     auto upload_frame(const uint32_t* pixels, int width, int height, int pitch) -> void override;
-    auto upload_overlay(const uint32_t* pixels, int width, int height) -> void override;
-    auto present(const Viewport& viewport, const OverlayPlacement& overlay) -> void override;
+    auto upload_overlay(OverlayLayer layer, const uint32_t* pixels, int width, int height) -> void override;
+    auto present(const Viewport& viewport, const OverlayPlacements& overlays) -> void override;
     auto set_filter(const FilterPreset& preset) -> bool override;
     auto kind() const -> BackendKind override { return BackendKind::Gpu; }
     auto description() const -> std::string override;
@@ -46,8 +47,17 @@ private:
     auto input_texture(const std::string& input) const -> SDL_GPUTexture*;
     auto ensure_capture(Uint32 width, Uint32 height) -> bool;
     auto run_passes(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* output, const Viewport& viewport) -> void;
-    auto release_overlay() -> void;
-    auto draw_overlay(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* output, const OverlayPlacement& overlay) -> void;
+    // One overlay layer: uploaded like the frame (only when it changes).
+    struct Overlay {
+        SDL_GPUTransferBuffer* upload = nullptr;
+        SDL_GPUTexture* texture = nullptr;
+        Uint32 w = 0;
+        Uint32 h = 0;
+        bool pending = false;
+    };
+    auto release_overlay(Overlay& overlay) -> void;
+    auto draw_overlay(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* output, const Overlay& overlay, const OverlayPlacement& placement)
+        -> void;
     auto finish_screenshot(SDL_GPUFence* fence, const std::string& path) -> void;
 
     SDL_GPUDevice* device_ = nullptr;
@@ -67,14 +77,10 @@ private:
     bool has_frame_ = false;
     Uint32 frame_count_ = 0;
 
-    // The overlay: uploaded like the frame (only when it changes), drawn by overlay_pipeline_.
-    // No pipeline (shader missing) just means no overlay.
+    // The overlay layers, drawn by overlay_pipeline_. No pipeline (shader missing) just means
+    // no overlays.
     SDL_GPUGraphicsPipeline* overlay_pipeline_ = nullptr;
-    SDL_GPUTransferBuffer* overlay_upload_ = nullptr;
-    SDL_GPUTexture* overlay_ = nullptr;
-    Uint32 overlay_w_ = 0;
-    Uint32 overlay_h_ = 0;
-    bool overlay_pending_ = false;
+    std::array<Overlay, kOverlayLayerCount> overlays_{};
 
     // Screenshots: render into this instead of the swapchain, then download and blit.
     SDL_GPUTexture* capture_ = nullptr;

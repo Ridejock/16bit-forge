@@ -5,10 +5,12 @@
 #include <vector>
 #include <array>
 #include <cstdint>
+#include <span>
 #include "snes/controllers.hpp"
 #include "snes/types.hpp"
 #include "snes/cpu/cpu_bus.hpp"
 #include "snes/memory/cartridge.hpp"
+#include "snes/memory/wram.hpp"
 #include "snes/serialize.hpp"
 
 namespace bitforge::ppu { class PPU; }
@@ -128,6 +130,7 @@ public:
   // WRAM byte at `offset` (0-$1FFFF) without touching the bus: for tests and tools.
   auto peek_wram(Address offset) const -> Byte;
   auto poke_wram(Address offset, Byte value) -> void;
+  auto wram_bytes() -> std::span<Byte> { return wram->bytes(); }
 
   // The last address the S-CPU or DMA put on the bus.
   auto last_address() const -> Address { return mar; }
