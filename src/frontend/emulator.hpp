@@ -4,8 +4,10 @@
 #include "snes/cheats.hpp"
 #include "snes/controllers.hpp"
 #include "speedrun/movie.hpp"
+#include "speedrun/movie_journal.hpp"
 #include "speedrun/run_timer.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -35,6 +37,7 @@ struct MovieStatus {
     bool read_only = true;
     bool race = false;    // recorded in race mode from its first frame
     speedrun::MovieStart start = speedrun::MovieStart::PowerOn;
+    bool journal = false; // recorded since it opened: Stop writes the file
     std::string path;
 };
 
@@ -119,9 +122,14 @@ public:
     // until another game is loaded the battery save is neither read nor written, so a movie
     // always starts from the same blank save and never overwrites the real one.
     //
-    // Save states made meanwhile carry the movie up to that frame (states/<rom>.<slot>.bfm).
-    // Loading one, or rewinding, goes back in the movie: in read-only mode playback carries on
-    // from there; otherwise the movie is cut there and recording carries on (a rerecord).
+    // A recording is journaled to <path>.part every flush interval (speedrun/movie_journal.hpp),
+    // so a crash loses at most that much; Stop writes the movie and deletes the journal.
+    //
+    // Save states made meanwhile get a reference to the movie up to that frame
+    // (states/<rom>.<slot>.bfs). Loading one, or rewinding, goes back in the movie: in read-only
+    // mode playback carries on from there (the state must be on the take playing); otherwise the
+    // movie is cut there and recording carries on (a rerecord), also from a take cut earlier in
+    // this recording (the journal still has it).
     struct MovieMeta {
         std::string emulator;  // "16bit Forge <version>"
         std::string author;
@@ -138,6 +146,11 @@ public:
     // Playing, and every frame of it has been played.
     auto movie_at_end() const -> bool { return movie_mode_ == MovieMode::Playing && movie_cursor_ >= movie_.frames.size(); }
     auto set_movie_read_only(bool on) -> void { movie_read_only_ = on; }
+    // How often new input goes to the journal, in frames (60: about a second).
+    auto set_movie_flush_frames(uint32_t frames) -> void { flush_frames_ = std::clamp<uint32_t>(frames, 1, speedrun::kMaxFlushFrames); }
+    // Hands the input recorded since the last time to the journal (run_frame() does, every flush
+    // interval); `wait`: and waits until it is on disk.
+    auto flush_movie(bool wait = false) -> void;
     // A rewind or timeline jump while recording cut the movie: counts once per jump.
     auto add_rerecord() -> void;
 
@@ -225,6 +238,11 @@ private:
     auto apply_input(const speedrun::FrameInput& in) -> void;
     auto capture_input() -> void;  // input_ = what the ports hold (after a boot)
     auto rewind_movie(uint64_t frame) -> void;  // a snapshot load moved back to `frame`
+    auto cut_movie(size_t frame) -> void;       // recording from `frame`: the rest goes
+    auto start_journal() -> void;               // recording: journal it, if not yet
+    // The take a reference is on, from an old sidecar or this recording's journal: false if it is gone.
+    auto take_of(const speedrun::StateRef& ref, std::vector<speedrun::FrameInput>& frames) -> bool;
+    auto state_ref(size_t frame) -> speedrun::StateRef;  // to this movie's first `frame` frames
     auto load_sram() -> void;
     auto load_cheats() -> void;
     auto load_watches() -> void;
@@ -249,6 +267,12 @@ private:
     size_t movie_cursor_ = 0;                         // the next frame to record or play
     std::string movie_path_;
     bool movie_read_only_ = true;
+    speedrun::JournalWriter journal_;                 // while (and since) the movie records
+    size_t journal_frames_ = 0;                       // the journal has the movie's frames up to here
+    uint32_t journal_rerecords_ = 0;                  // and these rerecords
+    bool journal_race_ = false;                       // and this race flag
+    uint32_t flush_frames_ = speedrun::kDefaultFlushFrames;
+    uint32_t unflushed_ = 0;                          // frames since the last flush
     uint64_t watches_revision_ = 0;
     speedrun::Jump jump_ = speedrun::Jump::None;
     std::string data_dir_;

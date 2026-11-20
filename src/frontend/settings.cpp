@@ -194,6 +194,7 @@ auto Settings::load(const std::string& path) -> void {
             if (key == "author") movie.author = value;
             if (key == "attempt_movies") movie.attempt_movies = parse_bool(value);
             if (key == "overlay") movie.overlay = parse_bool(value);
+            if (key == "flush_frames") parse_int(value, 1, static_cast<int>(speedrun::kMaxFlushFrames), movie.flush_frames);
             for (const auto& e : speedrun::kMovieEnds) {
                 if (key == "at_end" && value == e.key) movie.at_end = e.id;
             }
@@ -263,7 +264,8 @@ auto Settings::save(const std::string& path) const -> bool {
         << "at_end=" << speedrun::info(movie.at_end).key << "\n"
         << "author=" << movie.author << "\n"
         << "attempt_movies=" << (movie.attempt_movies ? 1 : 0) << "\n"
-        << "overlay=" << (movie.overlay ? 1 : 0) << "\n\n";
+        << "overlay=" << (movie.overlay ? 1 : 0) << "\n"
+        << "flush_frames=" << movie.flush_frames << "\n\n";
 
     out << "[recent]\n";
     for (size_t i = 0; i < recent_roms.size(); i++) {

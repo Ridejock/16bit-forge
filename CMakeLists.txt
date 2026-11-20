@@ -103,11 +103,14 @@ add_library(bitforge_core STATIC
     src/speedrun/autosplit.cpp
     src/speedrun/splits_file.cpp
     src/speedrun/movie.cpp
+    src/speedrun/movie_journal.cpp
     src/speedrun/race.cpp
     src/utils/logging.cpp
     src/utils/sha1.cpp
 )
 target_include_directories(bitforge_core PUBLIC src)
+find_package(Threads REQUIRED)
+target_link_libraries(bitforge_core PUBLIC Threads::Threads)  # the movie journal's writer
 
 add_executable(${PROJECT_NAME}
     src/main.cpp
@@ -133,7 +136,6 @@ add_executable(${PROJECT_NAME}
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE src)
-find_package(Threads REQUIRED)
 target_link_libraries(${PROJECT_NAME} PRIVATE bitforge_core SDL3::SDL3-static imgui Threads::Threads)
 # App icon (assets/icons, made by tools/make_icons.py). Windows: the .ico goes into the exe as a
 # resource, with the name and version in its file properties. Elsewhere the 64 px PNG is
@@ -253,7 +255,8 @@ target_link_libraries(race_tests PRIVATE bitforge_core)
 
 # Movies (src/speedrun/movie.*): the .bfm format, recording and playback in the core on a
 # built-in test ROM (replays match frame for frame), save states and rewind cutting a recording
-# (rerecords), read-only playback, and the battery save left alone. Headless.
+# (rerecords), read-only playback, the battery save left alone, the recording journal (crash
+# recovery) and save-state references. Headless.
 add_executable(movie_tests tests/movie_tests.cpp src/frontend/emulator.cpp src/frontend/rewind.cpp)
 target_include_directories(movie_tests PRIVATE src)
 target_link_libraries(movie_tests PRIVATE bitforge_core)

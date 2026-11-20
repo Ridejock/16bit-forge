@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // The app's movie side (speedrun/movie.hpp): the Movie menu, its file dialogs, the prompt for a
-// movie made with another ROM, the status bar entry and the game window's REC / PLAY badge.
+// movie made with another ROM, recovering a recording a crash left unfinished
+// (speedrun/movie_journal.hpp), the status bar entry and the game window's REC / PLAY badge.
 // Recording and playback themselves run on the emulation thread (Emulator, EmuThread::Core).
 #include "frontend/app.hpp"
 #include "speedrun/race.hpp"
@@ -8,6 +9,7 @@
 
 #include "imgui.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <ctime>
@@ -26,6 +28,7 @@ constexpr SDL_DialogFileFilter kMovieFilters[] = {
 constexpr const char* kMoviesFolder = "movies";
 constexpr const char* kMoviePromptId = "###movie_prompt";  // one popup, its title per mismatch
 constexpr float kMoviePromptWidthEm = 40.f;
+constexpr const char* kMovieRecoveryTitle = "Recover an unfinished recording?###movie_recovery";
 
 // How each mode looks: its badge (status bar, game window) and colour.
 struct MovieLook {
@@ -76,6 +79,7 @@ auto App::apply_movie_settings() -> void {
         c.movie_end = m.at_end;
         c.attempt_movies = m.attempt_movies;
         c.emu.set_movie_read_only(m.read_only);
+        c.emu.set_movie_flush_frames(static_cast<uint32_t>(m.flush_frames));
     });
 }
 
@@ -173,6 +177,7 @@ auto App::take_movie_dialog() -> void {
 // ---- Commands -----------------------------------------------------------------------------------
 
 auto App::record_movie(speedrun::MovieStart start, const std::string& path) -> void {
+    if (unfinished_movie(path)) return;
     const std::string author = settings_.movie.author;
     const std::string why = emu_thread_.call([start, path, author](EmuThread::Core& c) {
         return c.record_movie(start, path, author, EmuThread::timer_clock());
@@ -188,6 +193,7 @@ auto App::record_movie(speedrun::MovieStart start, const std::string& path) -> v
 
 // Reads the file; a movie made with another ROM or emulator version asks first.
 auto App::open_movie(const std::string& path) -> void {
+    if (unfinished_movie(path)) return;
     speedrun::Movie movie;
     if (const std::string why = speedrun::read_movie(path, movie); !why.empty()) {
         notify("Can't play " + why);
@@ -217,7 +223,7 @@ auto App::stop_movie() -> void {
     const std::string why = emu_thread_.call([](EmuThread::Core& c) { return c.emu.stop_movie(); });
     status_ = emu_thread_.status();
     if (!why.empty()) notify("Movie: " + why);
-    else if (before.mode == MovieMode::Recording) notify("Movie saved: " + fs::path(before.path).filename().string());
+    else if (before.mode == MovieMode::Recording || before.journal) notify("Movie saved: " + fs::path(before.path).filename().string());
     else notify("Playback stopped");
 }
 
@@ -266,6 +272,85 @@ auto App::draw_movie_prompt() -> void {
     if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) close = true;
     if (close) {
         movie_prompt_.reset();
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
+// ---- Unfinished recordings ----------------------------------------------------------------------
+
+auto App::find_unfinished_movies() -> void {
+    unfinished_movies_ = speedrun::find_journals((fs::path(base_dir_) / kMoviesFolder).string());
+}
+
+auto App::unfinished_movie(const std::string& movie_path) -> bool {
+    const std::string journal = speedrun::journal_path(movie_path);
+    std::error_code ec;
+    if (status_.movie.journal && status_.movie.path == movie_path) return false;  // this recording's own
+    if (!fs::exists(journal, ec)) return false;
+    if (std::find(unfinished_movies_.begin(), unfinished_movies_.end(), journal) == unfinished_movies_.end() &&
+        !(movie_recovery_ && movie_recovery_->journal == journal)) {
+        unfinished_movies_.push_back(journal);
+    }
+    notify("An unfinished recording of " + fs::path(movie_path).filename().string() + " was found: recover or discard it first");
+    return true;
+}
+
+auto App::draw_movie_recovery() -> void {
+    if (!movie_recovery_) {
+        if (unfinished_movies_.empty() || movie_prompt_) return;
+        UnfinishedMovie u;
+        u.journal = unfinished_movies_.front();
+        unfinished_movies_.erase(unfinished_movies_.begin());
+        std::error_code ec;
+        if (!fs::exists(u.journal, ec)) return;  // dealt with meanwhile
+        u.why = speedrun::read_journal(u.journal, u.read);
+        movie_recovery_ = std::move(u);
+    }
+    if (!ImGui::IsPopupOpen(kMovieRecoveryTitle)) ImGui::OpenPopup(kMovieRecoveryTitle);
+    ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * kMoviePromptWidthEm, 0.f));
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (!ImGui::BeginPopupModal(kMovieRecoveryTitle, nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) return;
+    const UnfinishedMovie& u = *movie_recovery_;
+    const fs::path movie = speedrun::journal_movie_path(u.journal);
+    const speedrun::Movie& m = u.read.movie;
+    std::error_code ec;
+    ImGui::PushTextWrapPos(0.f);
+    ImGui::TextUnformatted("This movie was still recording when 16bit Forge last closed. Its input up to the last save to "
+                           "disk can be kept as the movie.");
+    ImGui::Spacing();
+    ImGui::Text("Movie:      %s", movie.filename().string().c_str());
+    const fs::path folder = movie.parent_path().lexically_relative(base_dir_);  // movies/<rom> when it's ours
+    ImGui::Text("Folder:     %s", (folder.empty() || folder.begin()->string() == ".." ? movie.parent_path() : folder).string().c_str());
+    if (!u.why.empty()) {
+        ImGui::Text("Can't be read: %s", u.why.c_str());
+    } else {
+        ImGui::Text("ROM:        %s", m.rom_file.c_str());
+        ImGui::Text("Recorded:   %zu frames (%s), %s", m.frames.size(), Emulator::play_time_text(m.frames.size()).c_str(),
+                    std::string(speedrun::info(m.start).label).c_str());
+        ImGui::Text("Rerecords:  %u", m.rerecords);
+        if (u.read.torn) ImGui::TextUnformatted("The input after that was cut short by the crash and is left out.");
+        if (fs::exists(movie, ec)) ImGui::TextUnformatted("Recover replaces the movie file there now (the take this recording started from).");
+    }
+    ImGui::PopTextWrapPos();
+    ImGui::Separator();
+    bool close = false;
+    ImGui::BeginDisabled(!u.why.empty());
+    if (ImGui::Button("Recover")) {
+        const std::string why = speedrun::recover_journal(u.journal);
+        notify(why.empty() ? "Movie recovered: " + movie.filename().string() + " (" + std::to_string(m.frames.size()) + " frames)"
+                           : "Can't recover the movie: " + why);
+        close = true;
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Discard")) {
+        fs::remove(u.journal, ec);
+        notify("Discarded the unfinished recording of " + movie.filename().string());
+        close = true;
+    }
+    if (close) {
+        movie_recovery_.reset();
         ImGui::CloseCurrentPopup();
     }
     ImGui::EndPopup();

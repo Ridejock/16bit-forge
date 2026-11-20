@@ -78,15 +78,6 @@ auto get_u64(std::span<const uint8_t> in, size_t at) -> uint64_t {
     return v;
 }
 
-// The state's movie (if `movie`, its first `frames` frames) beside it, or no stale one.
-auto write_state_movie(const std::string& state_path, const speedrun::Movie* movie, size_t frames) -> bool {
-    const std::string path = speedrun::state_movie_path(state_path);
-    if (movie) return speedrun::write_movie(path, *movie, frames);
-    std::error_code ec;
-    fs::remove(path, ec);
-    return true;
-}
-
 } // namespace
 
 Emulator::Emulator() = default;
@@ -199,6 +190,7 @@ auto Emulator::run_frame() -> void {
     apply_freezes();
     system_->run_frame();
     frames_++;
+    if (journal_.is_open() && ++unflushed_ >= flush_frames_) flush_movie();
     sample_watches();
     if (frames_ % kSramFlushFrames == 0) flush_sram();
 
@@ -295,7 +287,7 @@ auto Emulator::next_input() -> speedrun::FrameInput {
         if (p.device == bitforge::Device::Mouse) p.words[0] = p.words[1] = 0;  // the motion went with this frame
     }
     if (movie_mode_ == MovieMode::Recording) {
-        movie_.frames.resize(movie_cursor_);
+        cut_movie(movie_cursor_);
         movie_.frames.push_back(in);
         movie_cursor_++;
         if (!race_) movie_.race = false;
@@ -357,6 +349,7 @@ auto Emulator::record_movie(speedrun::MovieStart start, const std::string& path,
     movie_cursor_ = 0;
     movie_path_ = path;
     pending_events_ = 0;
+    start_journal();
     utils::Logger::info(utils::LogChannel::Rom, "Movie: recording %s to %s", std::string(speedrun::info(start).label).c_str(), path.c_str());
     return why;
 }
@@ -388,14 +381,22 @@ auto Emulator::play_movie(speedrun::Movie movie, const std::string& path) -> std
 auto Emulator::stop_movie() -> std::string {
     if (movie_mode_ == MovieMode::Off) return {};
     std::string why;
-    if (movie_mode_ == MovieMode::Recording && !movie_path_.empty()) {
-        if (speedrun::write_movie(movie_path_, movie_, movie_cursor_)) {
-            utils::Logger::info(utils::LogChannel::Rom, "Movie: %zu frames, %u rerecords written to %s", movie_cursor_, movie_.rerecords,
-                                movie_path_.c_str());
+    // What was recorded since it opened is written (temp file + rename), then the journal goes.
+    // If the movie can't be written the journal stays, to be recovered.
+    if ((movie_mode_ == MovieMode::Recording || journal_.is_open()) && !movie_path_.empty()) {
+        if (speedrun::write_movie(movie_path_, movie_)) {
+            utils::Logger::info(utils::LogChannel::Rom, "Movie: %zu frames, %u rerecords written to %s", movie_.frames.size(),
+                                movie_.rerecords, movie_path_.c_str());
+            journal_.close(true);
         } else {
             why = "could not write " + movie_path_;
+            if (journal_.is_open()) {
+                flush_movie();
+                why += " (" + fs::path(journal_.path()).filename().string() + " is kept, to recover it)";
+            }
         }
     }
+    journal_.close(false);
     movie_ = {};
     movie_mode_ = MovieMode::Off;
     movie_cursor_ = 0;
@@ -413,6 +414,7 @@ auto Emulator::movie_status() const -> MovieStatus {
     s.read_only = movie_read_only_;
     s.race = movie_.race;
     s.start = movie_.start;
+    s.journal = journal_.is_open();
     s.path = movie_path_;
     return s;
 }
@@ -423,7 +425,52 @@ auto Emulator::add_rerecord() -> void {
 
 auto Emulator::rewind_movie(uint64_t frame) -> void {
     movie_cursor_ = static_cast<size_t>(frame);
-    if (movie_mode_ == MovieMode::Recording) movie_.frames.resize(movie_cursor_);
+    if (movie_mode_ == MovieMode::Recording) cut_movie(movie_cursor_);
+}
+
+auto Emulator::cut_movie(size_t frame) -> void {
+    if (frame < movie_.frames.size()) movie_.frames.resize(frame);
+    journal_frames_ = std::min(journal_frames_, frame);
+}
+
+auto Emulator::start_journal() -> void {
+    if (journal_.is_open() || movie_path_.empty()) return;
+    journal_.open(movie_path_, movie_);
+    journal_frames_ = movie_.frames.size();
+    journal_rerecords_ = movie_.rerecords;
+    journal_race_ = movie_.race;
+    unflushed_ = 0;
+}
+
+auto Emulator::flush_movie(bool wait) -> void {
+    if (!journal_.is_open()) return;
+    unflushed_ = 0;
+    if (journal_frames_ != movie_.frames.size() || journal_rerecords_ != movie_.rerecords || journal_race_ != movie_.race) {
+        journal_.append(speedrun::encode_journal_input(movie_, journal_frames_));
+        journal_frames_ = movie_.frames.size();
+        journal_rerecords_ = movie_.rerecords;
+        journal_race_ = movie_.race;
+    }
+    if (wait && !journal_.sync()) utils::Logger::error(utils::LogChannel::Rom, "Movie: could not write %s", journal_.path().c_str());
+}
+
+auto Emulator::state_ref(size_t frame) -> speedrun::StateRef {
+    flush_movie();  // the journal has this take, should a rerecord cut it
+    return speedrun::make_state_ref(movie_, frame, journal_.id(), journal_.size());
+}
+
+auto Emulator::take_of(const speedrun::StateRef& ref, std::vector<speedrun::FrameInput>& frames) -> bool {
+    if (ref.frames.size() == ref.frame) {  // an old sidecar: the take itself
+        frames = ref.frames;
+        return true;
+    }
+    if (!journal_.is_open() || ref.journal_id != journal_.id() || ref.journal_size > journal_.size() || !journal_.sync()) return false;
+    speedrun::Journal journal;
+    if (!speedrun::read_journal(journal_.path(), journal, ref.journal_size).empty() || !speedrun::on_take(ref, journal.movie.frames)) {
+        return false;
+    }
+    frames.assign(journal.movie.frames.begin(), journal.movie.frames.begin() + ref.frame);
+    return true;
 }
 
 auto Emulator::rom_sha1_hex() const -> std::string {
@@ -460,7 +507,8 @@ auto Emulator::save_state(int slot) -> std::string {
                                                         width_, height_);
     const std::string path = state_path(slot);
     const bool movie = movie_mode_ != MovieMode::Off;
-    if (!write_file(path, data) || !write_state_movie(path, movie ? &movie_ : nullptr, movie_cursor_)) {
+    const speedrun::StateRef ref = movie ? state_ref(movie_cursor_) : speedrun::StateRef{};
+    if (!write_file(path, data) || !speedrun::write_state_ref(path, movie ? &ref : nullptr)) {
         utils::Logger::error(utils::LogChannel::State, "Could not write %s", path.c_str());
         return "could not write " + path;
     }
@@ -479,16 +527,19 @@ auto Emulator::load_state(int slot) -> std::string {
         return "slot " + std::to_string(slot) + " is empty";
     }
     // During a movie a state goes back to its frame of the movie: it must have been saved in
-    // this movie, and in read-only mode on the same branch of it.
-    speedrun::Movie branch;
+    // this movie, and in read-only mode on the take playing. Read+write, a take a rerecord cut
+    // comes back from the journal.
+    speedrun::StateRef ref;
+    std::vector<speedrun::FrameInput> take;
+    bool same_take = true;
     const bool movie = movie_mode_ != MovieMode::Off;
     if (movie) {
         const std::string slot_name = "state " + std::to_string(slot);
-        if (!speedrun::read_movie(speedrun::state_movie_path(path), branch).empty() || branch.id != movie_.id) {
-            return slot_name + " wasn't saved during this movie";
-        }
-        if (movie_read_only_ && !speedrun::is_prefix(branch.frames, movie_.frames)) {
-            return slot_name + " is from another take of this movie (turn read-only off to record from it)";
+        if (!speedrun::read_state_ref(path, ref) || ref.movie_id != movie_.id) return slot_name + " wasn't saved during this movie";
+        same_take = speedrun::on_take(ref, movie_.frames);
+        if (!same_take && movie_read_only_) return slot_name + " is from another take of this movie (turn read-only off to record from it)";
+        if (!same_take && !take_of(ref, take)) {
+            return slot_name + " is from another take of this movie that is no longer kept (takes are kept while the movie stays open)";
         }
     }
     std::string why;
@@ -498,13 +549,20 @@ auto Emulator::load_state(int slot) -> std::string {
         return why;
     }
     if (movie) {
-        movie_cursor_ = branch.frames.size();
+        movie_cursor_ = ref.frame;
         if (movie_read_only_) {
             movie_mode_ = MovieMode::Playing;
         } else {
-            movie_.frames = std::move(branch.frames);
+            if (same_take) {
+                cut_movie(ref.frame);
+            } else {
+                const auto common = std::mismatch(take.begin(), take.end(), movie_.frames.begin(), movie_.frames.end()).first;
+                cut_movie(static_cast<size_t>(common - take.begin()));  // the journal keeps what both takes share
+                movie_.frames = std::move(take);
+            }
             movie_.rerecords++;
             movie_mode_ = MovieMode::Recording;
+            start_journal();
         }
         utils::Logger::info(utils::LogChannel::Rom, "Movie: %s from frame %zu (%u rerecords)", movie_read_only_ ? "playing" : "recording",
                             movie_cursor_, movie_.rerecords);
@@ -571,12 +629,13 @@ auto Emulator::save_snapshot_to_slot(int slot, std::span<const uint8_t> snapshot
     const uint64_t frame = get_u64(snapshot, 0);
     const uint64_t movie_frame = get_u64(snapshot, sizeof(uint64_t));
     const bool movie = movie_mode_ != MovieMode::Off && movie_frame != kNoMovieFrame && movie_frame <= movie_.frames.size();
+    const speedrun::StateRef ref = movie ? state_ref(static_cast<size_t>(movie_frame)) : speedrun::StateRef{};
     const bool have_thumb = thumb && thumb_w > 0 && thumb_h > 0;
     const std::vector<uint8_t> data = savestate::encode_from_state(
         system_->rom_crc32(), frame, unix_now(), have_thumb ? thumb : nullptr, have_thumb ? thumb_w : 0,
         have_thumb ? thumb_h : 0, snapshot.subspan(kSnapshotHeader));
     const std::string path = state_path(slot);
-    if (!write_file(path, data) || !write_state_movie(path, movie ? &movie_ : nullptr, movie ? movie_frame : 0)) {
+    if (!write_file(path, data) || !speedrun::write_state_ref(path, movie ? &ref : nullptr)) {
         utils::Logger::error(utils::LogChannel::State, "Could not write %s", path.c_str());
         return "could not write " + path;
     }

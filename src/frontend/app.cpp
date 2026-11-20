@@ -127,6 +127,8 @@ auto App::init() -> bool {
     core.movie_end = settings_.movie.at_end;
     core.attempt_movies = settings_.movie.attempt_movies;
     core.emu.set_movie_read_only(settings_.movie.read_only);
+    core.emu.set_movie_flush_frames(static_cast<uint32_t>(settings_.movie.flush_frames));
+    find_unfinished_movies();
     for (int p = 0; p < kPadCount; p++) input_.set_port(p, settings_.ports[static_cast<size_t>(p)]);
     input_.set_pointer_config(settings_.pointer);
     input_.open_connected();
@@ -588,6 +590,7 @@ auto App::draw_ui() -> void {
     draw_menu_bar();
     draw_race_prompt();
     draw_movie_prompt();
+    draw_movie_recovery();
 
     // Reserve the status bar, and the timeline strip while a game is loaded.
     const float status_h = ImGui::GetFrameHeightWithSpacing();

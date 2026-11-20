@@ -119,7 +119,8 @@ private:
     auto race_tooltip(speedrun::Guard guard) const -> void;
 
     // Movies (app_movie.cpp): the Movie menu, its dialogs, the prompt for a movie made with
-    // another ROM, the status bar entry and the game window badge.
+    // another ROM, the one for a recording a crash left unfinished, the status bar entry and the
+    // game window badge.
     enum class MovieDialog : uint8_t { None, RecordPowerOn, RecordState, Play };
     struct PendingMovie {
         speedrun::Movie movie;
@@ -137,6 +138,11 @@ private:
     auto stop_movie() -> void;
     auto watch_movie() -> void;
     auto draw_movie_prompt() -> void;
+    // A recording that never stopped leaves its journal (<movie>.bfm.part): asked about at start-up
+    // (those under movies/) and before recording to or playing its movie. Recover / Discard.
+    auto find_unfinished_movies() -> void;
+    auto unfinished_movie(const std::string& movie_path) -> bool;  // true: it has one, now asked about
+    auto draw_movie_recovery() -> void;
     auto draw_movie_status() -> void;
     auto movie_badge(int& width, int& height, Corner& corner) const -> std::vector<uint32_t>;
     static void SDLCALL on_movie_chosen(void* userdata, const char* const* files, int filter);
@@ -239,6 +245,13 @@ private:
     MovieDialog movie_dialog_ = MovieDialog::None;  // the one open (under dialog_mutex_)
     std::optional<std::string> movie_dialog_path_;   // its answer (under dialog_mutex_)
     std::optional<PendingMovie> movie_prompt_;       // waiting on "another ROM?"
+    struct UnfinishedMovie {
+        std::string journal;    // its path
+        speedrun::Journal read; // what it holds
+        std::string why;        // why it can't be read ("" when it can)
+    };
+    std::vector<std::string> unfinished_movies_;     // journals still to ask about
+    std::optional<UnfinishedMovie> movie_recovery_;  // the one being asked about
     uint64_t movie_ends_seen_ = 0;
 };
 

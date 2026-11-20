@@ -13,6 +13,8 @@
 // controller port, the device and four words (kDeviceWords says which a device uses). Runs of
 // identical frames are stored once, so held buttons and idle stretches cost a few bytes.
 // No SDL or ImGui: the emulator records and plays, the frontend shows it, the tests drive it.
+// While a movie records it is also journaled to disk (speedrun/movie_journal.hpp), and a save
+// state made during one gets a small reference to it (StateRef, below).
 #include "snes/controllers.hpp"
 #include "snes/serialize.hpp"
 #include "speedrun/splits.hpp"
@@ -31,6 +33,8 @@ inline constexpr std::array<char, 4> kMovieMagic = {'B', 'F', 'M', '\x1A'};
 inline constexpr uint16_t kMovieVersion = 1;
 inline constexpr size_t kMoviePorts = 2;
 inline constexpr size_t kPortWords = 4;
+// A day of frames: more than any run, and a cap on what a damaged file can make us allocate.
+inline constexpr uint64_t kMaxMovieFrames = 24ull * 3600 * 61;
 
 // Things that happen to the console before a frame's input is read.
 enum MovieEvent : uint8_t {
@@ -130,6 +134,12 @@ auto decode_movie(std::span<const uint8_t> data, Movie& movie) -> MovieResult;
 // Whole files. read_movie: "" or why it failed; write_movie: false if it can't be written.
 auto read_movie(const std::string& path, Movie& movie) -> std::string;
 auto write_movie(const std::string& path, const Movie& movie, size_t frames = SIZE_MAX) -> bool;
+// The input part of a file: u32 run count, then per run u32 frames + one FrameInput (the
+// journal's input records too). read_runs appends, refusing to go past `limit` frames in all.
+auto write_runs(Archive& ar, std::span<const FrameInput> frames) -> void;
+auto read_runs(Archive& ar, std::vector<FrameInput>& frames, uint64_t limit) -> bool;
+// SHA-1 of frames' input as the file stores it: tells one take of a movie from another.
+auto input_hash(std::span<const FrameInput> frames) -> std::array<uint8_t, 20>;
 
 // What differs between a movie and what is running, warned about before playback: a bit set.
 enum MovieMismatch : uint8_t { kMismatchRom = 1, kMismatchEmulator = 2 };
@@ -144,8 +154,43 @@ auto mismatch_prompt(uint8_t mismatch) -> const MismatchPrompt&;
 
 // True when `part`'s frames are the start of `whole`'s.
 auto is_prefix(std::span<const FrameInput> part, std::span<const FrameInput> whole) -> bool;
-// Where a save state's movie goes: "states/Game.3.sst" -> "states/Game.3.bfm".
+
+// ---- A save state made during a movie: <state>.bfs, a reference to the movie --------------------
+//
+//   magic "BFS\x1A" | version u16 | movie id u64 | frame u32 | input SHA-1 20 bytes (input_hash
+//   of frames [0, frame)) | journal id u64 | journal length u64
+//
+// 54 bytes, however long the movie. The state is on a take of the movie when that take's first
+// `frame` frames hash the same. A state from a take that was cut since (a rerecord) is found in
+// the open recording's journal: its id and how long it was when the state was saved. Builds
+// before this one wrote the whole movie so far as <state>.bfm instead; those still load.
+inline constexpr std::array<char, 4> kStateRefMagic = {'B', 'F', 'S', '\x1A'};
+inline constexpr uint16_t kStateRefVersion = 1;
+inline constexpr std::string_view kStateRefExtension = ".bfs";
+
+struct StateRef {
+  uint64_t movie_id = 0;
+  uint32_t frame = 0;                 // the movie frame the state was saved at
+  std::array<uint8_t, 20> input{};    // input_hash of the frames before it
+  uint64_t journal_id = 0;            // the recording's journal then (0: none)
+  uint64_t journal_size = 0;          // its length then, in bytes
+  std::vector<FrameInput> frames;     // an old sidecar's: the take itself (`frame` of them)
+};
+// A reference to `movie`'s first `frame` frames.
+auto make_state_ref(const Movie& movie, size_t frame, uint64_t journal_id, uint64_t journal_size) -> StateRef;
+auto encode_state_ref(const StateRef& ref) -> std::vector<uint8_t>;
+// A .bfs, or an old sidecar (a whole .bfm).
+auto decode_state_ref(std::span<const uint8_t> data, StateRef& ref) -> MovieResult;
+// True when the reference's frames are the start of `frames`.
+auto on_take(const StateRef& ref, std::span<const FrameInput> frames) -> bool;
+// "states/Game.3.sst" -> "states/Game.3.bfs"; the old sidecar: "states/Game.3.bfm".
+auto state_ref_path(std::string_view state_path) -> std::string;
 auto state_movie_path(std::string_view state_path) -> std::string;
+// The state's reference: its .bfs, else an old .bfm. False if it has none (or it is damaged).
+auto read_state_ref(const std::string& state_path, StateRef& ref) -> bool;
+// Writes the .bfs (and drops an old .bfm); without `ref`, removes both.
+auto write_state_ref(const std::string& state_path, const StateRef* ref) -> bool;
+
 // A race verified attempt's movie: <data dir>/movies/<rom>/attempt-<n>.bfm
 auto attempt_movie_path(std::string_view data_dir, std::string_view rom_stem, int attempt) -> std::string;
 // "1234" while recording, "1234 / 5000" while playing: the frame counter text.

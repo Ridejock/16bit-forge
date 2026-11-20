@@ -4,6 +4,7 @@
 #include "frontend/input.hpp"
 #include "frontend/rewind.hpp"
 #include "speedrun/movie.hpp"
+#include "speedrun/movie_journal.hpp"
 #include "speedrun/splits.hpp"
 #include "utils/logging.hpp"
 #include "video/video_backend.hpp"
@@ -33,6 +34,7 @@ struct MovieConfig {
     std::string author;                                  // written into new movies
     bool attempt_movies = true;                          // a verified run's movie: movies/<rom>/attempt-<n>.bfm
     bool overlay = true;                                 // the REC / PLAY badge in the game window
+    int flush_frames = speedrun::kDefaultFlushFrames;    // a recording goes to its journal this often
 };
 
 struct Settings {

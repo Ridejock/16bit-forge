@@ -4,19 +4,25 @@
 // for frame (picture and machine state), from power-on and from a save state, through resets and
 // device changes, with the player's input ignored. Save states and rewind snapshots during a
 // recording cut it there (rerecords); read-only playback goes back without cutting, and refuses
-// a state from another take. A replayed run is never race verified. Headless, no ROM files.
+// a state from another take. A recording is journaled as it goes (a crash keeps it, up to the
+// last flush) and written whole on Stop; a state made during a movie keeps only a small
+// reference to it (old whole-movie sidecars still load). A replayed run is never race verified.
+// Headless, no ROM files.
 #include "test_rom.hpp"
 #include "frontend/emulator.hpp"
 #include "speedrun/movie.hpp"
+#include "speedrun/movie_journal.hpp"
 #include "speedrun/race.hpp"
 #include "speedrun/run_timer.hpp"
 #include "utils/logging.hpp"
 #include "utils/sha1.hpp"
 
+#include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace bitforge;
@@ -292,7 +298,7 @@ auto test_rerecords() -> void {
     CHECK(emu.record_movie(MovieStart::PowerOn, path, {}).empty());
     emu.set_movie_read_only(false);
     for (int f = 0; f < 50; f++) take.push_back(live_frame(emu, f, 5));
-    CHECK(emu.save_state(1).empty() && fs::exists(state_movie_path(emu.state_path(1))));
+    CHECK(emu.save_state(1).empty() && fs::exists(state_ref_path(emu.state_path(1))));
     for (int f = 50; f < 80; f++) live_frame(emu, f, 6);  // take A, dropped below
     CHECK(emu.save_state(2).empty());
     CHECK(!emu.load_state(3).empty() && emu.movie_status().frame == 80);  // not saved during the movie
@@ -317,10 +323,12 @@ auto test_rerecords() -> void {
     // A timeline moment saved to a slot carries the movie up to it.
     CHECK(emu.save_snapshot_to_slot(4, snap, nullptr, 0, 0).empty());
     CHECK(emu.stop_movie().empty());
-    CHECK(emu.save_state(5).empty() && !fs::exists(state_movie_path(emu.state_path(5))));  // no movie, no sidecar
+    CHECK(emu.save_state(5).empty() && !fs::exists(state_ref_path(emu.state_path(5))));  // no movie, no sidecar
+    CHECK(!fs::exists(journal_path(path)));  // written, so the journal is gone
     const Movie movie = load_movie(path);
     CHECK(movie.frames.size() == 130 && movie.rerecords == 2);
-    CHECK(load_movie(state_movie_path(emu.state_path(4))).frames.size() == 95);
+    StateRef ref4;
+    CHECK(read_state_ref(emu.state_path(4), ref4) && ref4.frame == 95 && ref4.movie_id == movie.id && on_take(ref4, movie.frames));
 
     // The final take replays.
     Emulator player;
@@ -345,6 +353,7 @@ auto test_rerecords() -> void {
     player.set_movie_read_only(false);
     CHECK(player.load_state(1).empty() && player.movie_mode() == MovieMode::Recording && player.movie_status().frames == 50);
     CHECK(player.movie_status().rerecords == 3);
+    CHECK(!player.load_state(2).empty() && player.movie_status().frames == 50);  // take A was cut in another recording
     // Snapshots from before the movie are refused during it.
     Emulator other;
     other.set_data_dir(dir.string());
@@ -353,6 +362,238 @@ auto test_rerecords() -> void {
     CHECK(other.record_movie(MovieStart::PowerOn, (dir / "other.bfm").string(), {}).empty());
     CHECK(!other.load_snapshot(before));
     CHECK(!other.load_state(1).empty());  // another movie's state
+    // Journals stay open until the recording ends. Windows will not delete a file the writer
+    // still has open, so these end before the folder is removed.
+    player.stop_movie();
+    other.stop_movie();
+    fs::remove_all(dir);
+}
+
+// ---- Crash safety: the journal ----------------------------------------------------------------
+
+auto file_bytes(const fs::path& path) -> std::vector<uint8_t> {
+    std::ifstream in(path, std::ios::binary);
+    return std::vector<uint8_t>((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
+// The journal as the writer thread has it on disk once it holds `frames` frames (a few seconds at most).
+auto journal_at(const std::string& path, size_t frames) -> Journal {
+    Journal j;
+    for (int tries = 0; tries < 500; tries++) {
+        if (read_journal(path, j).empty() && j.movie.frames.size() >= frames) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return j;
+}
+
+auto test_journal() -> void {
+    const fs::path dir = temp_dir("bitforge_movie_tests_journal");
+    const std::string rom = test_rom::write_test_rom(13);
+    const std::string path = (dir / "run.bfm").string();
+    std::vector<uint64_t> recorded;
+    Emulator emu;
+    emu.set_data_dir(dir.string());
+    CHECK(emu.load(rom));
+    emu.set_movie_flush_frames(30);
+    CHECK(emu.record_movie(MovieStart::PowerOn, path, {"16bit Forge test", "tester"}).empty());
+    CHECK(emu.movie_status().journal);
+    for (int f = 0; f < 100; f++) recorded.push_back(live_frame(emu, f, 2));
+    // Every 30 frames: 90 of the 100 are on disk, the last 10 not yet.
+    Journal j = journal_at(journal_path(path), 90);
+    CHECK(j.movie.frames.size() == 90 && !j.torn && j.movie.id == emu.movie().id && j.movie.author == "tester");
+    CHECK(is_prefix(j.movie.frames, emu.movie().frames));
+
+    // "A crash": the journal as it is now, left behind.
+    const fs::path crash = dir / "crash.bfm";
+    fs::copy_file(journal_path(path), journal_path(crash.string()));
+    CHECK(find_journals(dir.string()).size() == 2);
+    CHECK(journal_movie_path(journal_path(crash.string())) == crash.string());
+    // Its last record cut short as well: left out, the rest kept.
+    std::vector<uint8_t> torn = file_bytes(journal_path(crash.string()));
+    std::vector<uint8_t> cut(torn.begin(), torn.end() - 3);
+    CHECK(decode_journal(cut, j) == MovieResult::Ok && j.torn && j.movie.frames.size() == 60);
+    std::vector<uint8_t> flipped = torn;
+    flipped[flipped.size() - 6] ^= 0x40;  // damaged: fails its CRC
+    CHECK(decode_journal(flipped, j) == MovieResult::Ok && j.torn && j.movie.frames.size() == 60);
+    CHECK(decode_journal(std::span(torn).first(20), j) == MovieResult::Corrupt);  // not even the header
+    torn[0] = 'X';
+    CHECK(decode_journal(torn, j) == MovieResult::NotAMovie);
+
+    // Recovered: a valid movie up to the last flush that replays as recorded.
+    CHECK(recover_journal(journal_path(crash.string())).empty());
+    CHECK(!fs::exists(journal_path(crash.string())) && fs::exists(crash));
+    const Movie saved = load_movie(crash.string());
+    CHECK(saved.frames.size() == 90 && saved.id == emu.movie().id && saved.emulator == "16bit Forge test");
+    {
+        Emulator player;
+        player.set_data_dir(dir.string());
+        CHECK(player.load(rom) && player.play_movie(saved, crash.string()).empty());
+        int same = 0;
+        for (int f = 0; f < 90; f++) same += played_frame(player, f) == recorded[static_cast<size_t>(f)];
+        CHECK(same == 90 && player.movie_at_end());
+    }
+
+    // Rerecords go to the journal too: a rewind cut and a state load, then the frames after.
+    emu.set_movie_read_only(false);
+    std::vector<uint8_t> snap;
+    for (int f = 100; f < 140; f++) {
+        if (f == 110) snap = emu.save_snapshot();
+        live_frame(emu, f, 3);
+    }
+    CHECK(emu.load_snapshot(snap));
+    emu.add_rerecord();
+    for (int f = 110; f < 125; f++) live_frame(emu, f, 4);
+    emu.flush_movie(true);
+    CHECK(read_journal(journal_path(path), j).empty() && j.movie.frames == emu.movie().frames && j.movie.rerecords == 1);
+
+    // Stop: the movie written whole (temp file + rename) and the journal gone.
+    const Movie final_take = emu.movie();
+    CHECK(emu.stop_movie().empty() && !emu.movie_status().journal);
+    CHECK(!fs::exists(journal_path(path)) && !fs::exists(path + ".tmp"));
+    const Movie written = load_movie(path);
+    CHECK(written.frames == final_take.frames && written.rerecords == 1);
+    CHECK(find_journals(dir.string()).empty());
+    fs::remove_all(dir);
+}
+
+// The movie file is only replaced whole; one that can't be written keeps its journal.
+auto test_finalize() -> void {
+    const fs::path dir = temp_dir("bitforge_movie_tests_finalize");
+    const std::string rom = test_rom::write_test_rom(14);
+    const std::string path = (dir / "take.bfm").string();
+    Emulator emu;
+    emu.set_data_dir(dir.string());
+    CHECK(emu.load(rom));
+    for (int round = 0; round < 2; round++) {  // a new take over an older one
+        CHECK(emu.record_movie(MovieStart::PowerOn, path, {}).empty());
+        for (int f = 0; f < 50 + round * 20; f++) live_frame(emu, f, 5 + round);
+        emu.flush_movie(true);
+        if (round == 1) CHECK(load_movie(path).frames.size() == 50);  // the old take until Stop
+        CHECK(emu.stop_movie().empty() && load_movie(path).frames.size() == static_cast<size_t>(50 + round * 20));
+    }
+    // A movie that can't be written (a folder in the way): Stop says so and the journal stays.
+    const fs::path blocked = dir / "blocked.bfm";
+    fs::create_directories(blocked / "x");
+    CHECK(emu.record_movie(MovieStart::PowerOn, blocked.string(), {}).empty());
+    for (int f = 0; f < 40; f++) live_frame(emu, f, 7);
+    const Movie take = emu.movie();
+    CHECK(!emu.stop_movie().empty() && emu.movie_mode() == MovieMode::Off);
+    CHECK(fs::exists(journal_path(blocked.string())));
+    CHECK(!recover_journal(journal_path(blocked.string())).empty() && fs::exists(journal_path(blocked.string())));
+    fs::remove_all(blocked);
+    CHECK(recover_journal(journal_path(blocked.string())).empty() && load_movie(blocked.string()).frames == take.frames);
+    // A state-start movie keeps its state through the journal.
+    CHECK(emu.record_movie(MovieStart::SaveState, path, {}).empty());
+    for (int f = 0; f < 10; f++) live_frame(emu, f, 8);
+    emu.flush_movie(true);
+    Journal j;
+    CHECK(read_journal(journal_path(path), j).empty() && j.movie.start == MovieStart::SaveState && j.movie.state == emu.movie().state);
+    CHECK(emu.stop_movie().empty());
+    fs::remove_all(dir);
+}
+
+// ---- Save-state references ----------------------------------------------------------------------
+
+// What builds before references wrote beside a state: the whole movie up to it.
+auto write_old_sidecar(const std::string& state_path, uint64_t id, std::vector<FrameInput> frames) -> bool {
+    Movie m;
+    m.id = id;
+    m.frames = std::move(frames);
+    return write_movie(state_movie_path(state_path), m);
+}
+
+auto test_state_refs() -> void {
+    const fs::path dir = temp_dir("bitforge_movie_tests_refs");
+    const std::string rom = test_rom::write_test_rom(15);
+    const std::string path = (dir / "tas.bfm").string();
+    Emulator emu;
+    emu.set_data_dir(dir.string());
+    CHECK(emu.load(rom));
+    CHECK(emu.record_movie(MovieStart::PowerOn, path, {}).empty());
+    emu.set_movie_read_only(false);
+    for (int f = 0; f < 50; f++) live_frame(emu, f, 1);
+    CHECK(emu.save_state(1).empty());
+    for (int f = 50; f < 80; f++) live_frame(emu, f, 2);  // take A
+    CHECK(emu.save_state(2).empty());
+    const std::vector<FrameInput> take_a = emu.movie().frames;
+    const std::vector<uint64_t> a_hash = {frame_hash(emu)};
+
+    // The reference: the same few bytes however long the movie is.
+    const auto ref_size = [&](int slot) { return fs::file_size(state_ref_path(emu.state_path(slot))); };
+    CHECK(ref_size(1) == 54 && ref_size(2) == 54);
+    CHECK(!fs::exists(state_movie_path(emu.state_path(1))));
+
+    // Back to 50 (cut), take B; then take A's state again: it comes back from the journal.
+    CHECK(emu.load_state(1).empty() && emu.movie_status().frames == 50);
+    for (int f = 50; f < 90; f++) live_frame(emu, f, 3);
+    CHECK(emu.save_state(3).empty());
+    const std::vector<FrameInput> take_b = emu.movie().frames;
+    CHECK(emu.load_state(2).empty());
+    CHECK(emu.movie_mode() == MovieMode::Recording && emu.movie().frames == take_a && emu.movie_status().frame == 80);
+    CHECK(emu.movie_status().rerecords == 2 && frame_hash(emu) == a_hash[0]);
+    // And take B's: also kept.
+    CHECK(emu.load_state(3).empty() && emu.movie().frames == take_b && emu.movie_status().rerecords == 3);
+    // Read-only: only the take playing.
+    emu.set_movie_read_only(true);
+    CHECK(!emu.load_state(2).empty() && emu.movie().frames == take_b);
+    CHECK(emu.load_state(1).empty() && emu.movie_mode() == MovieMode::Playing && emu.movie_status().frame == 50);
+    // Long movie, same size: 3000 more frames.
+    emu.set_movie_read_only(false);
+    CHECK(emu.load_state(3).empty());
+    for (int f = 90; f < 3090; f++) {
+        emu.set_joypad(0, pad(f, 4));
+        emu.run_frame();
+    }
+    CHECK(emu.save_state(4).empty() && ref_size(4) == 54);
+    CHECK(encode_movie(emu.movie()).size() > 10 * 54);  // what an old sidecar would have been
+
+    // Old (whole movie) sidecars still load: on this take, and another take's in read+write.
+    fs::copy_file(emu.state_path(1), emu.state_path(5));
+    CHECK(write_old_sidecar(emu.state_path(5), emu.movie().id, {take_a.begin(), take_a.begin() + 50}));
+    StateRef old;
+    CHECK(read_state_ref(emu.state_path(5), old) && old.frame == 50 && old.frames.size() == 50 && on_take(old, emu.movie().frames));
+    CHECK(emu.load_state(5).empty() && emu.movie_status().frames == 50 && emu.movie_status().frame == 50);
+    fs::copy_file(emu.state_path(2), emu.state_path(6));
+    CHECK(write_old_sidecar(emu.state_path(6), emu.movie().id, take_a));
+    for (int f = 50; f < 60; f++) live_frame(emu, f, 5);  // take C: A is not on it
+    CHECK(emu.load_state(6).empty() && emu.movie().frames == take_a);
+    // Another movie's old sidecar: refused.
+    fs::copy_file(emu.state_path(1), emu.state_path(7));
+    CHECK(write_old_sidecar(emu.state_path(7), 42, {take_a.begin(), take_a.begin() + 50}));
+    CHECK(!emu.load_state(7).empty() && emu.movie().frames == take_a);
+    // Saving over an old sidecar's slot replaces it with a reference.
+    CHECK(emu.save_state(5).empty() && !fs::exists(state_movie_path(emu.state_path(5))) && ref_size(5) == 54);
+    CHECK(emu.stop_movie().empty());
+
+    // A movie opened later has no journal of those takes: B's state is refused read+write, with a reason.
+    Emulator player;
+    player.set_data_dir(dir.string());
+    CHECK(player.load(rom) && player.play_movie(load_movie(path), path).empty());
+    player.set_movie_read_only(false);
+    const std::string why = player.load_state(3);
+    CHECK(why.find("no longer kept") != std::string::npos && player.movie_mode() == MovieMode::Playing);
+    CHECK(player.load_state(1).empty() && player.movie_mode() == MovieMode::Recording);  // A's first 50 = this take's
+    CHECK(player.stop_movie().empty());
+
+    // The format: round trip, damage, a newer version.
+    StateRef r;
+    r.movie_id = 99;
+    r.frame = 1234;
+    r.input.fill(7);
+    r.journal_id = 5;
+    r.journal_size = 6789;
+    const std::vector<uint8_t> bytes = encode_state_ref(r);
+    StateRef back;
+    CHECK(bytes.size() == 54 && decode_state_ref(bytes, back) == MovieResult::Ok);
+    CHECK(back.movie_id == 99 && back.frame == 1234 && back.input == r.input && back.journal_id == 5 && back.journal_size == 6789);
+    CHECK(back.frames.empty());
+    CHECK(decode_state_ref(std::span(bytes).first(30), back) == MovieResult::Corrupt);
+    std::vector<uint8_t> newer = bytes;
+    newer[4] = static_cast<uint8_t>(kStateRefVersion + 1);
+    CHECK(decode_state_ref(newer, back) == MovieResult::WrongVersion);
+    newer = bytes;
+    newer[2] = 'X';
+    CHECK(decode_state_ref(newer, back) == MovieResult::NotAMovie);
     fs::remove_all(dir);
 }
 
@@ -508,6 +749,9 @@ int main() {
         {"Replay from power-on matches frame for frame", test_power_on_replay},
         {"Replay from a save state, race mode refuses it", test_state_start_replay},
         {"Rerecords: states, rewind, read-only, takes", test_rerecords},
+        {"Journal: crash recovery, torn records, rerecords", test_journal},
+        {"Stop: whole-file write, a failed one keeps the journal", test_finalize},
+        {"State references: takes, journal, old sidecars, size", test_state_refs},
         {"Battery save: blank in a movie, the file untouched", test_battery},
         {"ROM / version mismatch: warnings, one dialog", test_mismatch},
         {"Run timer: replays never verify or count; summary names it", test_replay_timer},

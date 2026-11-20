@@ -54,6 +54,10 @@ are emulated at the instruction level rather than with game-specific hacks.
     verification `.json`. A replayed run shows REPLAY, is never race verified, and stays out
     of the splits: no attempt count, history, PB or golds. Every movie starts with a blank
     battery save, and the game's `.srm` / `.rtc` are left alone until it is loaded again.
+    A recording is saved to `<movie>.bfm.part` about every second (`[movie] flush_frames`),
+    so a crash loses at most that much: 16bit Forge offers to recover it or discard it on the
+    next start (movies under `movies/`) or when you record to or play that movie. Stop writes
+    the `.bfm` whole.
     Playing a movie made with another ROM or another emulator version asks first
   - GPU renderer (Vulkan / Direct3D 12 / Metal through SDL_GPU) with filter shaders:
     nearest, sharp-bilinear, xBR, ScaleFX, CRT scanlines, CRT-Lottes (optional curvature),
@@ -98,7 +102,8 @@ emulator.
 - Saves go next to the program: `saves/` (battery RAM, `.srm`, and clock, `.rtc`),
   `states/` (save states, `.sst`), `cheats/` (`.cht`), `watches/` (`.wch`), `splits/` (`.lss`, with
   `.autosplit`, `.race` and verification `.json` files beside them), `movies/` (`.bfm`; a
-  state saved during a movie gets a `.bfm` of the movie so far beside its `.sst`), `logs/`. Settings are in
+  state saved during a movie gets a small `.bfs` beside its `.sst` naming the movie and its
+  frame), `logs/`. Settings are in
   `16bitForge.ini`; a `snes_emulator.ini` from before the rename is read once if there is no
   `16bitForge.ini` yet.
 
