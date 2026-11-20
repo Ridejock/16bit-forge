@@ -171,7 +171,7 @@ auto EmuThread::Core::write_verification_if_due() -> void {
     v.category = run.category;
     v.rom_file = emu.rom_name();
     v.rom_crc32 = emu.rom_crc32();
-    v.rom_sha1 = utils::sha1_file(emu.rom_path()).value_or("");
+    v.rom_sha1 = emu.rom_sha1_hex();
     v.standard = t.standard();
     v.attempt = speedrun::next_attempt_id(run);  // the id the attempt gets when it's reset
     v.started = speedrun::utc_stamp(t.started_unix());
@@ -179,6 +179,7 @@ auto EmuThread::Core::write_verification_if_due() -> void {
     v.final_time = t.splits().empty() ? speedrun::Times{} : t.splits().back();
     v.game_frames = t.game_frames();
     for (size_t i = 0; i < run.segments.size() && i < t.splits().size(); i++) v.splits.push_back({run.segments[i].name, t.splits()[i]});
+    attach_movie(v);
     const std::string path = speedrun::verification_path(splits.file.path, v.attempt);
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
     out << speedrun::format_verification(v);
@@ -188,6 +189,77 @@ auto EmuThread::Core::write_verification_if_due() -> void {
     }
     verify.path = path;
     utils::Logger::info(utils::LogChannel::Rom, "Race verified run: %s", path.c_str());
+}
+
+// The movie recording this verified run, to the frame that finished it, if it can stand behind it.
+auto EmuThread::Core::attach_movie(speedrun::Verification& v) -> void {
+    if (!attempt_movies || emu.movie_mode() != MovieMode::Recording || !emu.movie().verifiable()) return;
+    const std::string path = speedrun::attempt_movie_path(emu.data_dir(), emu.rom_stem(), v.attempt);
+    const auto sha1 = speedrun::write_movie(path, emu.movie(), emu.movie_frame()) ? utils::sha1_file(path) : std::nullopt;
+    if (!sha1) {
+        utils::Logger::error(utils::LogChannel::Rom, "Race verification: could not write the movie %s", path.c_str());
+        return;
+    }
+    const std::filesystem::path relative = std::filesystem::path(path).lexically_relative(emu.data_dir().empty() ? "." : emu.data_dir());
+    v.movie = speedrun::Verification::MovieRef{relative.generic_string(), *sha1, emu.movie_frame(), emu.movie().rerecords};
+    utils::Logger::info(utils::LogChannel::Rom, "Race verified run: movie %s", path.c_str());
+}
+
+// ---- movies (emulation thread) ---------------------------------------------------------------
+
+auto EmuThread::Core::record_movie(speedrun::MovieStart start, const std::string& path, const std::string& author,
+                                   const speedrun::Clock& now) -> std::string {
+    before_movie(start, now);
+    std::string why = emu.record_movie(start, path, {verify.emulator, author});
+    movie_started(start);
+    return why;
+}
+
+auto EmuThread::Core::play_movie(speedrun::Movie movie, const std::string& path, const speedrun::Clock& now) -> std::string {
+    const speedrun::MovieStart start = movie.start;
+    before_movie(start, now);
+    std::string why = emu.play_movie(std::move(movie), path);
+    movie_started(start);
+    return why;
+}
+
+// A movie from power-on restarts the game, so an attempt in progress ends there (a reset).
+auto EmuThread::Core::before_movie(speedrun::MovieStart start, const speedrun::Clock& now) -> void {
+    if (start != speedrun::MovieStart::PowerOn || !emu.loaded() || splits.timer.state() == speedrun::TimerState::Ready) return;
+    splits.timer.reset(now);
+    save_splits();
+}
+
+auto EmuThread::Core::movie_started(speedrun::MovieStart start) -> void {
+    if (emu.movie_mode() == MovieMode::Off) return;
+    rewind.clear();  // its snapshots are from before the movie
+    frames_since_snapshot = 0;
+    fast_forward_toggled = false;
+    advance_one = false;
+    audio.flush();  // the sound jumps
+    if (start == speedrun::MovieStart::PowerOn) state = RunState::Running;
+    republish = true;
+}
+
+auto EmuThread::Core::end_movie_if_done() -> void {
+    if (!emu.movie_at_end()) return;
+    if (movie_end != speedrun::MovieEnd::Pause || state == RunState::Running) movie_ends++;
+    switch (movie_end) {
+    case speedrun::MovieEnd::Pause:
+        if (state == RunState::Running) utils::Logger::info(utils::LogChannel::Rom, "Movie: the end (%llu frames), paused",
+                                                            static_cast<unsigned long long>(emu.movie_frame()));
+        state = RunState::Paused;
+        advance_one = false;
+        break;
+    case speedrun::MovieEnd::Stop:
+        emu.stop_movie();
+        state = RunState::Paused;
+        advance_one = false;
+        break;
+    case speedrun::MovieEnd::Live:
+        emu.stop_movie();
+        break;
+    }
 }
 
 auto EmuThread::start() -> void {
@@ -298,6 +370,7 @@ auto EmuThread::step() -> bool {
     // nothing counted). Set before the step so the first frame after a (re)start is queued.
     c.audio.set_paused(!c.emu.loaded() || c.state != RunState::Running || held);
 
+    c.end_movie_if_done();
     const bool race = c.emu.race();
     const bool advance = c.advance_one && speedrun::race_allows(race, speedrun::Guard::FrameAdvance);
     if (c.advance_one && !advance) c.advance_one = false;
@@ -321,7 +394,9 @@ auto EmuThread::step() -> bool {
         int ran = 1;
         if (rewinding_) {
             if (rewind_frame()) step_timer();
+            rewound_ = true;
         } else {
+            if (std::exchange(rewound_, false)) c.emu.add_rerecord();  // a recording carries on from there
             ran = run_frames(fast_forward_);
         }
         fast_frames_window_ += static_cast<uint64_t>(ran);
@@ -424,7 +499,7 @@ auto EmuThread::run_frames(bool fast) -> int {
         fast_audio_.insert(fast_audio_.end(), apu.begin(), apu.end());
         fast_msu_.insert(fast_msu_.end(), msu.begin(), msu.end());
         if (fast && target == 0 && SDL_GetTicksNS() - start >= kUncappedBudgetNs) break;
-    } while (fast && ran < (target == 0 ? kMaxFastFrames : std::min(target, kMaxFastFrames)));
+    } while (fast && ran < (target == 0 ? kMaxFastFrames : std::min(target, kMaxFastFrames)) && !c.emu.movie_at_end());
     if (ran == 1) {
         step_audio_.swap(fast_audio_);
         step_msu_.swap(fast_msu_);
@@ -539,6 +614,11 @@ auto EmuThread::publish_status() -> void {
     s.splits_error = c.splits.error;
     s.race = c.emu.race();
     s.verification_path = c.verify.path;
+    s.rom_crc32 = c.emu.rom_crc32();
+    s.rom_sha1 = c.emu.rom_sha1();
+    s.movie = c.emu.movie_status();
+    s.movie_at_end = c.emu.movie_at_end();
+    s.movie_ends = c.movie_ends;
     s.device_recording = c.audio.device_recording();
     if (s.device_recording) {
         s.device_recording_path = c.audio.device_recording_path();

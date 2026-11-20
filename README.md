@@ -44,6 +44,14 @@ are emulated at the instruction level rather than with game-specific hacks.
     beside the `.lss`, which stays a plain LiveSplit file. Each verified finish also writes
     `<splits>.attempt-<n>.verified.json` with the ROM's CRC32 and SHA-1, the emulator version,
     the timing, and the final and split times, for a leaderboard submission
+  - input movies (Movie menu): record every frame's controller input, resets and power
+    cycles from power-on (or from the current state) into a small `.bfm` file, and play it
+    back frame for frame. Playback ignores your input and shows PLAY in the status bar and
+    the game window (REC while recording). Loading a state, or rewinding, while recording
+    cuts the movie there and counts a rerecord; with Movie > Read-only on, loading a state
+    during playback only seeks. A movie recorded in race mode from power-on through a race
+    verified run is saved as `movies/<game>/attempt-<n>.bfm`, and its SHA-1 goes into the
+    verification `.json`. A replayed run shows REPLAY and is never race verified
   - GPU renderer (Vulkan / Direct3D 12 / Metal through SDL_GPU) with filter shaders:
     nearest, sharp-bilinear, xBR, ScaleFX, CRT scanlines, CRT-Lottes (optional curvature),
     NTSC composite and S-Video signal simulation into a CRT (presets in `shaders/presets.ini`);
@@ -86,7 +94,8 @@ emulator.
   THIRD_PARTY_NOTICES.md.
 - Saves go next to the program: `saves/` (battery RAM, `.srm`, and clock, `.rtc`),
   `states/` (save states, `.sst`), `cheats/` (`.cht`), `watches/` (`.wch`), `splits/` (`.lss`, with
-  `.autosplit`, `.race` and verification `.json` files beside them), `logs/`. Settings are in
+  `.autosplit`, `.race` and verification `.json` files beside them), `movies/` (`.bfm`; a
+  state saved during a movie gets a `.bfm` of the movie so far beside its `.sst`), `logs/`. Settings are in
   `16bitForge.ini`; a `snes_emulator.ini` from before the rename is read once if there is no
   `16bitForge.ini` yet.
 
@@ -163,8 +172,8 @@ With GCC 14 or newer, install Clang too: the shadercross tool is then built with
 
 ### Tests
 
-`ctest` runs thirteen suites (CPU, PPU, APU, save states, enhancement chips, audio sync, input,
-filter presets, memory watches, the run timer, race mode, frame pacing, threading). They need no ROM files: they use hand-written instruction tests and
+`ctest` runs fourteen suites (CPU, PPU, APU, save states, enhancement chips, audio sync, input,
+filter presets, memory watches, the run timer, race mode, input movies, frame pacing, threading). They need no ROM files: they use hand-written instruction tests and
 a small test ROM generated in code. To also run free test ROMs (for example PeterLemon's or
 gilyon's SNES test suites), point `BITFORGE_TEST_ROMS_DIR` (CMake option or environment variable)
 at a folder of `.sfc` / `.spc` files, or pass ROM paths on a suite's command line.

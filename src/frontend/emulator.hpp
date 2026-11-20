@@ -3,8 +3,10 @@
 #include "debug/memory_watch.hpp"
 #include "snes/cheats.hpp"
 #include "snes/controllers.hpp"
+#include "speedrun/movie.hpp"
 #include "speedrun/run_timer.hpp"
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -21,6 +23,20 @@ struct Info;
 }
 
 namespace bitforge::frontend {
+
+enum class MovieMode : uint8_t { Off, Recording, Playing };
+
+// A movie as the UI shows it.
+struct MovieStatus {
+    MovieMode mode = MovieMode::Off;
+    uint64_t frame = 0;   // frames recorded or played so far
+    uint64_t frames = 0;  // the movie's length
+    uint32_t rerecords = 0;
+    bool read_only = true;
+    bool race = false;    // recorded in race mode from its first frame
+    speedrun::MovieStart start = speedrun::MovieStart::PowerOn;
+    std::string path;
+};
 
 // The only surface the UI sees of the core. No SDL or ImGui types cross this line.
 class Emulator {
@@ -42,6 +58,7 @@ public:
     // Coprocessor firmware is looked up in <data dir>/firmware. After a failed load,
     // last_error() says why (e.g. which firmware file is missing and its size); after a
     // successful one, last_warning() notes a chip that isn't emulated.
+    // Loading a game ends a movie.
     auto load(const std::string& path) -> bool;
     auto last_error() const -> const std::string& { return last_error_; }
     auto last_warning() const -> const std::string& { return last_warning_; }
@@ -65,6 +82,8 @@ public:
     auto rom_name() const -> const std::string& { return rom_name_; }
     auto rom_stem() const -> std::string;  // the ROM's file name without its extension
     auto rom_crc32() const -> uint32_t;    // of the ROM as loaded (no copier header); 0 without one
+    auto rom_sha1() const -> const std::array<uint8_t, 20>& { return rom_sha1_; }  // of the ROM file
+    auto rom_sha1_hex() const -> std::string;
     auto frame_count() const -> uint64_t { return frames_; }
     // What last moved frame_count() other than a frame (a reset, a state load, a rewind or
     // timeline jump), cleared by the call: the run timer keeps game time and auto-splits right.
@@ -82,6 +101,7 @@ public:
     // True until the PPU has produced a non-black pixel; framebuffer() is a test pattern then.
     auto showing_test_pattern() const -> bool { return !seen_output_; }
 
+    // Input goes to the ports at the start of the next frame (unless a movie is playing).
     // Controller `port` (0 = pad 1, 1 = pad 2) in $4218/$4219 bit order.
     auto set_joypad(int port, uint16_t state) -> void;
     // Pad 2 only reads as plugged in while a gamepad is assigned to it.
@@ -91,6 +111,35 @@ public:
     auto set_pad(int port, int slot, uint16_t state) -> void;
     auto add_mouse(int port, int dx, int dy, bool left, bool right) -> void;
     auto set_scope(int port, const bitforge::ScopeInput& input) -> void;
+
+    // ---- Movies (speedrun/movie.hpp) ------------------------------------------------------
+    // While one records, every frame's input (and a reset or power cycle before it) is added to
+    // it; while one plays, its input drives the game and what the frontend sets is ignored (a
+    // reset too). Starting one power-cycles the game, or loads the movie's state. From then
+    // until another game is loaded the battery save is neither read nor written, so a movie
+    // always starts from the same blank save and never overwrites the real one.
+    //
+    // Save states made meanwhile carry the movie up to that frame (states/<rom>.<slot>.bfm).
+    // Loading one, or rewinding, goes back in the movie: in read-only mode playback carries on
+    // from there; otherwise the movie is cut there and recording carries on (a rerecord).
+    struct MovieMeta {
+        std::string emulator;  // "16bit Forge 0.1.1"
+        std::string author;
+    };
+    // `path` is where stop_movie() writes it. "" or why it can't start.
+    auto record_movie(speedrun::MovieStart start, const std::string& path, const MovieMeta& meta) -> std::string;
+    auto play_movie(speedrun::Movie movie, const std::string& path) -> std::string;
+    // Ends it; a recording is written to its file first. "" or why the file couldn't be written.
+    auto stop_movie() -> std::string;
+    auto movie_mode() const -> MovieMode { return movie_mode_; }
+    auto movie() const -> const speedrun::Movie& { return movie_; }
+    auto movie_frame() const -> uint64_t { return movie_cursor_; }
+    auto movie_status() const -> MovieStatus;
+    // Playing, and every frame of it has been played.
+    auto movie_at_end() const -> bool { return movie_mode_ == MovieMode::Playing && movie_cursor_ >= movie_.frames.size(); }
+    auto set_movie_read_only(bool on) -> void { movie_read_only_ = on; }
+    // A rewind or timeline jump while recording cut the movie: counts once per jump.
+    auto add_rerecord() -> void;
 
     // ---- Save states: states/<rom>.<slot>.sst ---------------------------------------------
     struct SlotInfo {
@@ -109,7 +158,8 @@ public:
     auto load_state(int slot) -> std::string;
     // Header and thumbnail of a slot's file, if it exists and belongs to this emulator version.
     auto slot_info(int slot) const -> std::optional<SlotInfo>;
-    // In-memory snapshot for rewind: the frame counter and the machine (no header or thumbnail).
+    // In-memory snapshot for rewind: the frame counter, the movie frame and the machine (no
+    // header or thumbnail).
     auto save_snapshot() -> std::vector<uint8_t>;
     auto load_snapshot(std::span<const uint8_t> data) -> bool;
     // Writes slot `slot` from a rewind snapshot (frame counter, then the machine) and that
@@ -166,7 +216,15 @@ public:
     auto has_msu1() const -> bool;
 
 private:
+    auto boot(const std::string& path, bool battery) -> bool;
+    auto close_game() -> void;     // unload() without ending the movie
+    auto reset_machine() -> void;  // reset() without recording it
     auto update_test_pattern() -> void;
+    auto restore(std::span<const uint8_t> file, std::string& why) -> bool;  // a save-state file
+    auto next_input() -> speedrun::FrameInput;  // this frame's, from the movie or the frontend
+    auto apply_input(const speedrun::FrameInput& in) -> void;
+    auto capture_input() -> void;  // input_ = what the ports hold (after a boot)
+    auto rewind_movie(uint64_t frame) -> void;  // a snapshot load moved back to `frame`
     auto load_sram() -> void;
     auto load_cheats() -> void;
     auto load_watches() -> void;
@@ -182,6 +240,15 @@ private:
     std::vector<debug::WatchReading> last_readings_;  // last frame's (kept to reuse its storage)
     bool poked_ = false;                              // a hand edit since the game loaded
     bool race_ = false;
+    bool battery_off_ = false;                        // a movie: no battery file read or written
+    std::array<uint8_t, 20> rom_sha1_{};
+    speedrun::FrameInput input_;                      // the frontend's, applied at the next frame
+    uint8_t pending_events_ = 0;                      // a reset or power cycle to record
+    speedrun::Movie movie_;
+    MovieMode movie_mode_ = MovieMode::Off;
+    size_t movie_cursor_ = 0;                         // the next frame to record or play
+    std::string movie_path_;
+    bool movie_read_only_ = true;
     uint64_t watches_revision_ = 0;
     speedrun::Jump jump_ = speedrun::Jump::None;
     std::string data_dir_;

@@ -118,6 +118,27 @@ private:
     // The hover text on a control race mode greys out (nothing when race mode is off).
     auto race_tooltip(speedrun::Guard guard) const -> void;
 
+    // Movies (app_movie.cpp): the Movie menu, its dialogs, the prompt for a movie made with
+    // another ROM, the status bar entry and the game window badge.
+    enum class MovieDialog : uint8_t { None, RecordPowerOn, RecordState, Play };
+    struct PendingMovie {
+        speedrun::Movie movie;
+        std::string path;
+    };
+    auto apply_movie_settings() -> void;
+    auto draw_movie_menu() -> void;
+    auto show_movie_dialog(MovieDialog kind) -> void;
+    auto take_movie_dialog() -> void;
+    auto record_movie(speedrun::MovieStart start, const std::string& path) -> void;
+    auto open_movie(const std::string& path) -> void;
+    auto play_movie(speedrun::Movie movie, const std::string& path) -> void;
+    auto stop_movie() -> void;
+    auto watch_movie() -> void;
+    auto draw_movie_prompt() -> void;
+    auto draw_movie_status() -> void;
+    auto movie_badge(int& width, int& height, Corner& corner) const -> std::vector<uint32_t>;
+    static void SDLCALL on_movie_chosen(void* userdata, const char* const* files, int filter);
+
     auto open_rom_dialog() -> void;
     auto scan_roms() -> void;
     auto place_game_window() -> void;
@@ -213,6 +234,10 @@ private:
     // SDL may call the file-dialog callback on another thread.
     std::mutex dialog_mutex_;
     std::optional<std::string> dialog_result_;
+    MovieDialog movie_dialog_ = MovieDialog::None;  // the one open (under dialog_mutex_)
+    std::optional<std::string> movie_dialog_path_;   // its answer (under dialog_mutex_)
+    std::optional<PendingMovie> movie_prompt_;       // waiting on "another ROM?"
+    uint64_t movie_ends_seen_ = 0;
 };
 
 } // namespace bitforge::frontend

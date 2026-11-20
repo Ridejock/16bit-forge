@@ -17,6 +17,7 @@
 //
 // Race mode (race.hpp): an attempt started while it is on is a race run; it stays one until it
 // ends, unless race mode goes off, memory is tampered with or the game jumps (race_status).
+// An attempt a movie played any of is a replay: never verified, whatever else it was.
 #include "speedrun/race.hpp"
 #include "speedrun/splits.hpp"
 
@@ -43,6 +44,7 @@ struct FrameInfo {
   uint32_t tamper = 0;  // debug::TamperBits right now
   Clock now;
   bool race = false;    // race mode is on
+  bool replay = false;  // a movie is playing (the input isn't a player's)
 };
 
 enum class Action : uint8_t { None, Start, Split, Undo, Skip, Pause, Resume, Reset };
@@ -164,6 +166,8 @@ private:
   uint32_t tamper_ = 0;
   bool race_ = false;       // race mode is on
   bool race_run_ = false;   // this attempt started in race mode
+  bool replaying_ = false;  // a movie played the last frame
+  bool replay_run_ = false; // a movie played part of this attempt
   uint32_t race_breaks_ = 0;
   std::vector<Pending> pending_;
   Event last_event_;

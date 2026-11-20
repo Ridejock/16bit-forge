@@ -23,7 +23,7 @@ constexpr uint32_t kMessageText = 0xFFF0F0F0;    // ARGB
 constexpr uint32_t kMessageShadow = 0xFF000000;  // one pixel down-right of the text
 constexpr uint32_t kMessageBox = 0xA0101010;
 constexpr int kMessageLineGap = 2;     // between the lines of a text block
-constexpr int kTimerMargin = 4;        // the timer overlay's distance from the picture's edges
+constexpr int kTimerMargin = 4;        // the timer overlay's (and badge's) distance from the picture's edges
 
 // Round up so an N-times window always fits N whole picture widths (8:7 is fractional).
 auto window_width(const ViewOptions& view) -> int {
@@ -136,7 +136,7 @@ auto GameWindow::create_backend(video::BackendKind wanted, const video::FilterPr
         }
     }
     backend_->set_filter(filter);
-    message_dirty_ = timer_dirty_ = true;  // the new backend has no overlays yet
+    message_dirty_ = timer_.dirty = badge_.dirty = true;  // the new backend has no overlays yet
     return true;
 }
 
@@ -187,35 +187,46 @@ auto GameWindow::present(const uint32_t* pixels, int width, int height, const Vi
                                  message_h_);
         message_dirty_ = false;
     }
-    if (timer_dirty_) {
-        backend_->upload_overlay(video::OverlayLayer::Timer, timer_pixels_.empty() ? nullptr : timer_pixels_.data(), timer_w_, timer_h_);
-        timer_dirty_ = false;
+    for (auto [layer, image] : {std::pair{video::OverlayLayer::Timer, &timer_}, std::pair{video::OverlayLayer::Movie, &badge_}}) {
+        if (!image->dirty) continue;
+        backend_->upload_overlay(layer, image->pixels.empty() ? nullptr : image->pixels.data(), image->w, image->h);
+        image->dirty = false;
     }
     const video::Viewport picture = fit_viewport(out_w, out_h, view, height > 0 ? picture_lines(height) : kBaseHeight);
     video::OverlayPlacements overlays{};
     overlays[static_cast<size_t>(video::OverlayLayer::Message)] = message_placement();
-    overlays[static_cast<size_t>(video::OverlayLayer::Timer)] = timer_placement(picture);
+    overlays[static_cast<size_t>(video::OverlayLayer::Timer)] = corner_placement(timer_, picture, kTimerHeightShare);
+    overlays[static_cast<size_t>(video::OverlayLayer::Movie)] = corner_placement(badge_, picture, kBadgeHeightShare);
     backend_->present(picture, overlays);
 }
 
 auto GameWindow::show_timer(std::vector<uint32_t> pixels, int width, int height, Corner corner) -> void {
-    timer_corner_ = corner;
-    if (pixels == timer_pixels_ && width == timer_w_ && height == timer_h_) return;
-    timer_pixels_ = std::move(pixels);
-    timer_w_ = timer_pixels_.empty() ? 0 : width;
-    timer_h_ = timer_pixels_.empty() ? 0 : height;
-    timer_dirty_ = true;
+    timer_.set(std::move(pixels), width, height, corner);
 }
 
-// In its corner of the picture, a whole multiple of its size: about kTimerHeightShare of the
+auto GameWindow::show_badge(std::vector<uint32_t> pixels, int width, int height, Corner corner) -> void {
+    badge_.set(std::move(pixels), width, height, corner);
+}
+
+auto GameWindow::CornerImage::set(std::vector<uint32_t> image, int width, int height, Corner where) -> void {
+    corner = where;
+    if (image == pixels && width == w && height == h) return;
+    pixels = std::move(image);
+    w = pixels.empty() ? 0 : width;
+    h = pixels.empty() ? 0 : height;
+    dirty = true;
+}
+
+// In its corner of the picture, a whole multiple of its size: about `height_share` of the
 // picture's height, at least 1x.
-auto GameWindow::timer_placement(const video::Viewport& picture) const -> video::OverlayPlacement {
-    if (timer_pixels_.empty() || picture.w <= 0 || picture.h <= 0) return {};
-    const int scale = std::max(1, static_cast<int>(static_cast<float>(picture.h) * kTimerHeightShare / static_cast<float>(timer_h_)));
-    const int w = timer_w_ * scale;
-    const int h = timer_h_ * scale;
+auto GameWindow::corner_placement(const CornerImage& image, const video::Viewport& picture, float height_share)
+    -> video::OverlayPlacement {
+    if (image.pixels.empty() || picture.w <= 0 || picture.h <= 0) return {};
+    const int scale = std::max(1, static_cast<int>(static_cast<float>(picture.h) * height_share / static_cast<float>(image.h)));
+    const int w = image.w * scale;
+    const int h = image.h * scale;
     const int margin = kTimerMargin * scale;
-    const CornerInfo& c = info(timer_corner_);
+    const CornerInfo& c = info(image.corner);
     const int x = c.right ? picture.x + picture.w - w - margin : picture.x + margin;
     const int y = c.bottom ? picture.y + picture.h - h - margin : picture.y + margin;
     return {{x, y, w, h}, 1.0f};

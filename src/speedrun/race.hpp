@@ -13,6 +13,7 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -65,6 +66,7 @@ enum class RaceStatus : uint8_t {
   Clean,     // a race run, so far untouched
   Verified,  // finished in race mode, untouched
   Broken,    // a race run that stopped counting (see RaceBreak)
+  Replay,    // a movie played (some of) this run: it isn't a player's
 };
 // Why a race run stopped counting (bits).
 enum RaceBreak : uint32_t {
@@ -77,11 +79,12 @@ struct RaceStatusInfo {
   std::string_view tag;   // the timer's badge ("" = none)
   std::string_view help;  // its tooltip
 };
-inline constexpr std::array<RaceStatusInfo, 4> kRaceStatuses = {{
+inline constexpr std::array<RaceStatusInfo, 5> kRaceStatuses = {{
     {RaceStatus::Off, "", ""},
     {RaceStatus::Clean, "RACE", "Race mode run: nothing that changes the game or its timing has been used so far."},
     {RaceStatus::Verified, "RACE VERIFIED", "Finished from power-on in race mode with nothing that changes the game or its timing used."},
     {RaceStatus::Broken, "NOT VERIFIED", "This run started in race mode but no longer counts as race verified."},
+    {RaceStatus::Replay, "REPLAY", "A movie played this run (or part of it): it is a replay, never race verified."},
 }};
 inline auto info(RaceStatus s) -> const RaceStatusInfo& { return kRaceStatuses[static_cast<size_t>(s)]; }
 // "race mode was turned off, a cheat or memory edit was active": for the Broken tooltip.
@@ -114,6 +117,14 @@ struct Verification {
     Times time;  // cumulative; empty = skipped
   };
   std::vector<Split> splits;
+  // The run's movie (movie.hpp), when one recorded it all: its file and that file's SHA-1.
+  struct MovieRef {
+    std::string file;  // relative to the emulator's folder, '/' separated
+    std::string sha1;
+    uint64_t frames = 0;
+    uint32_t rerecords = 0;
+  };
+  std::optional<MovieRef> movie;
 };
 // A small JSON document; the "blocked" list comes from kGuards.
 auto format_verification(const Verification& v) -> std::string;

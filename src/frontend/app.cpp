@@ -124,6 +124,9 @@ auto App::init() -> bool {
     core.verify.emulator = std::string(BITFORGE_TITLE) + " " + BITFORGE_VERSION;
     core.verify.write = settings_.race.write_verification;
     core.set_race(settings_.race.enabled, EmuThread::timer_clock());  // no game yet: nothing restarts
+    core.movie_end = settings_.movie.at_end;
+    core.attempt_movies = settings_.movie.attempt_movies;
+    core.emu.set_movie_read_only(settings_.movie.read_only);
     for (int p = 0; p < kPadCount; p++) input_.set_port(p, settings_.ports[static_cast<size_t>(p)]);
     input_.set_pointer_config(settings_.pointer);
     input_.open_connected();
@@ -266,12 +269,14 @@ auto App::ui_frame() -> void {
             boot(path);
         }
     }
+    take_movie_dialog();
     if (stop_requested_) {
         stop_requested_ = false;
         stop();
     }
     status_ = emu_thread_.status();
     timer_panel_.update(status_, [this](std::string text) { notify(std::move(text)); });
+    watch_movie();
 
     if (game_.is_open()) {
         emu_thread_.take_frame();
@@ -553,6 +558,11 @@ auto App::present_game(const FrameImage& image) -> void {
     int timer_h = 0;
     std::vector<uint32_t> timer = timer_panel_.overlay_image(status_, timer_w, timer_h);
     game_.show_timer(std::move(timer), timer_w, timer_h, settings_.timer.corner);
+    int badge_w = 0;
+    int badge_h = 0;
+    Corner badge_corner = settings_.timer.corner;
+    std::vector<uint32_t> badge = movie_badge(badge_w, badge_h, badge_corner);
+    game_.show_badge(std::move(badge), badge_w, badge_h, badge_corner);
     game_.present(pixels, image.width, image.height, view_options());
 }
 
@@ -577,6 +587,7 @@ auto App::draw_ui() -> void {
 
     draw_menu_bar();
     draw_race_prompt();
+    draw_movie_prompt();
 
     // Reserve the status bar, and the timeline strip while a game is loaded.
     const float status_h = ImGui::GetFrameHeightWithSpacing();
@@ -687,12 +698,14 @@ auto App::draw_menu_bar() -> void {
 
     if (ImGui::BeginMenu("Emulation")) {
         if (ImGui::MenuItem(running ? "Pause" : "Run", "Space", false, loaded)) toggle_pause();
-        if (ImGui::MenuItem("Reset", nullptr, false, loaded)) {
+        const bool playing = status_.movie.mode == MovieMode::Playing;
+        if (ImGui::MenuItem("Reset", nullptr, false, loaded && !playing)) {
             emu_thread_.post([](EmuThread::Core& c) {
                 c.emu.reset();
                 c.audio.start_grace();
             });
         }
+        if (playing) ImGui::SetItemTooltip("A movie is playing: its own resets are in it.");
         if (ImGui::MenuItem("Stop", nullptr, false, loaded)) request_stop();
         const bool can_advance = speedrun::race_allows(status_.race, speedrun::Guard::FrameAdvance);
         if (ImGui::MenuItem("Frame advance", nullptr, false, loaded && status_.state == RunState::Paused && can_advance)) {
@@ -757,6 +770,8 @@ auto App::draw_menu_bar() -> void {
         if (ImGui::MenuItem("Timer overlay in the game window", nullptr, &settings_.timer.overlay)) save_settings();
         ImGui::EndMenu();
     }
+
+    draw_movie_menu();
 
     if (ImGui::BeginMenu("Debug")) {
         if (ImGui::MenuItem("Log", nullptr, &settings_.show_log)) save_settings();
@@ -1635,6 +1650,7 @@ auto App::play_from(uint64_t id) -> void {
     const bool ok = emu_thread_.call([id](EmuThread::Core& c) {
         const auto state = c.rewind.seek(id);
         if (!state || !c.emu.load_snapshot(*state)) return false;
+        c.emu.add_rerecord();  // a recording movie was cut there
         c.audio.flush();  // the sound jumps: fade the queue out and the new audio in
         c.frames_since_snapshot = 0;
         c.fast_forward_toggled = false;  // land at normal speed; the fast-forward key still works
@@ -1754,6 +1770,7 @@ auto App::draw_status_bar() -> void {
         ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.55f, 1.f), "|  RACE MODE");
         ImGui::SetItemTooltip("Race mode is on (Speedrun > Race mode).");
     }
+    draw_movie_status();
     if (status_.rewinding) {
         ImGui::SameLine();
         ImGui::Text("|  << Rewinding (%.1f s left)", status_.rewind_seconds);

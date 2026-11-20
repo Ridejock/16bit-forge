@@ -29,8 +29,8 @@ struct OverlayPlacement {
 };
 
 // The overlay images, each uploaded on its own and drawn over the picture in this order.
-enum class OverlayLayer : uint8_t { Timer, Message };
-inline constexpr size_t kOverlayLayerCount = 2;
+enum class OverlayLayer : uint8_t { Timer, Movie, Message };
+inline constexpr size_t kOverlayLayerCount = 3;
 using OverlayPlacements = std::array<OverlayPlacement, kOverlayLayerCount>;  // by OverlayLayer
 
 enum class BackendKind { Gpu, Renderer };

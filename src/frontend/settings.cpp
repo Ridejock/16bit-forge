@@ -189,6 +189,14 @@ auto Settings::load(const std::string& path) -> void {
         } else if (section == "race") {
             if (key == "enabled") race.enabled = parse_bool(value);
             if (key == "verification_file") race.write_verification = parse_bool(value);
+        } else if (section == "movie") {
+            if (key == "read_only") movie.read_only = parse_bool(value);
+            if (key == "author") movie.author = value;
+            if (key == "attempt_movies") movie.attempt_movies = parse_bool(value);
+            if (key == "overlay") movie.overlay = parse_bool(value);
+            for (const auto& e : speedrun::kMovieEnds) {
+                if (key == "at_end" && value == e.key) movie.at_end = e.id;
+            }
         } else if (section == "keys") {
             for (size_t i = 0; i < kPadButtons.size(); i++) {
                 if (key != kPadButtons[i].name) continue;
@@ -249,6 +257,13 @@ auto Settings::save(const std::string& path) const -> bool {
     out << "[race]\n"
         << "enabled=" << (race.enabled ? 1 : 0) << "\n"
         << "verification_file=" << (race.write_verification ? 1 : 0) << "\n\n";
+
+    out << "[movie]\n"
+        << "read_only=" << (movie.read_only ? 1 : 0) << "\n"
+        << "at_end=" << speedrun::info(movie.at_end).key << "\n"
+        << "author=" << movie.author << "\n"
+        << "attempt_movies=" << (movie.attempt_movies ? 1 : 0) << "\n"
+        << "overlay=" << (movie.overlay ? 1 : 0) << "\n\n";
 
     out << "[recent]\n";
     for (size_t i = 0; i < recent_roms.size(); i++) {

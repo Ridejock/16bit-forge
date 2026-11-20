@@ -3,6 +3,7 @@
 #include "frontend/game_window.hpp"
 #include "frontend/input.hpp"
 #include "frontend/rewind.hpp"
+#include "speedrun/movie.hpp"
 #include "speedrun/splits.hpp"
 #include "utils/logging.hpp"
 #include "video/video_backend.hpp"
@@ -23,6 +24,15 @@ struct TimerConfig {
 struct RaceConfig {
     bool enabled = false;            // on at start-up too (a game booted then starts clean)
     bool write_verification = true;  // a verified finish writes <splits>.attempt-<n>.verified.json
+};
+
+// [movie]: input movies (speedrun/movie.hpp).
+struct MovieConfig {
+    bool read_only = true;                               // a state load during playback keeps playing
+    speedrun::MovieEnd at_end = speedrun::MovieEnd::Pause;
+    std::string author;                                  // written into new movies
+    bool attempt_movies = true;                          // a verified run's movie: movies/<rom>/attempt-<n>.bfm
+    bool overlay = true;                                 // the REC / PLAY badge in the game window
 };
 
 struct Settings {
@@ -51,6 +61,7 @@ struct Settings {
     PointerConfig pointer;                          // [ports]: mouse speed, scope crosshair
     TimerConfig timer;                              // [timer]
     RaceConfig race;                                // [race]
+    MovieConfig movie;                              // [movie]
     bool show_timer = false;                        // the Timer tab is open
 
     // [log]: per-sink level and log file, per-channel enable. Applied to utils::Logger.

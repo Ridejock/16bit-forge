@@ -29,7 +29,8 @@ constexpr uint32_t kBehindColor = 0xFFE5534B;
 constexpr uint32_t kGoldColor = 0xFFFFC83C;
 constexpr uint32_t kModifiedColor = 0xFFFF9A2E;
 // The race badge's colour by speedrun::RaceStatus (Off has no badge).
-constexpr std::array<uint32_t, speedrun::kRaceStatuses.size()> kRaceColors = {kDimColor, 0xFF5AB4FF, kAheadColor, kModifiedColor};
+constexpr uint32_t kReplayColor = 0xFFC89BFF;
+constexpr std::array<uint32_t, speedrun::kRaceStatuses.size()> kRaceColors = {kDimColor, 0xFF5AB4FF, kAheadColor, kModifiedColor, kReplayColor};
 
 constexpr float kBigTimerScale = 2.6f;    // the tab's main timer, in font sizes
 constexpr int kOverlayTimerScale = 2;     // the overlay's main timer, in glyph sizes

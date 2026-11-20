@@ -84,6 +84,12 @@ struct EmuStatus {
     // Race mode (speedrun/race.hpp) and the last race verification summary written.
     bool race = false;
     std::string verification_path;
+    // The ROM's hashes (a movie for another ROM gets a warning) and the movie, if one is open.
+    uint32_t rom_crc32 = 0;
+    std::array<uint8_t, 20> rom_sha1{};
+    MovieStatus movie;
+    bool movie_at_end = false;
+    uint64_t movie_ends = 0;  // counts playbacks that reached their end
 };
 
 
@@ -158,6 +164,22 @@ public:
         };
         Verify verify;
         auto write_verification_if_due() -> void;
+
+        // Movies (Emulator::record_movie). Starting one from power-on resets an attempt in
+        // progress (the game restarts); either start drops the rewind history. At the end of
+        // playback `movie_end` says what happens; a race verified run recorded by a verifiable
+        // movie gets a copy of it, movies/<rom>/attempt-<n>.bfm (if `attempt_movies`), named
+        // in its verification file.
+        speedrun::MovieEnd movie_end = speedrun::MovieEnd::Pause;
+        bool attempt_movies = true;
+        uint64_t movie_ends = 0;
+        auto record_movie(speedrun::MovieStart start, const std::string& path, const std::string& author,
+                          const speedrun::Clock& now) -> std::string;
+        auto play_movie(speedrun::Movie movie, const std::string& path, const speedrun::Clock& now) -> std::string;
+        auto end_movie_if_done() -> void;  // before each frame
+        auto before_movie(speedrun::MovieStart start, const speedrun::Clock& now) -> void;
+        auto movie_started(speedrun::MovieStart start) -> void;
+        auto attach_movie(speedrun::Verification& v) -> void;
     };
     using Command = std::function<void(Core&)>;
 
@@ -244,6 +266,7 @@ private:
     std::vector<int16_t> step_audio_;                    // what one display frame queues: APU
     std::vector<int16_t> step_msu_;                      // and MSU-1 (empty without one)
     bool rewinding_ = false;
+    bool rewound_ = false;              // rewinding since the last normal frame (a movie's rerecord)
     bool fast_forward_ = false;
     uint64_t fast_frames_window_ = 0;   // emulated frames in this second (fps_frames_ counts displayed ones)
     double fast_rate_ = 0.0;

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "speedrun/race.hpp"
+#include "speedrun/movie.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -143,7 +144,13 @@ auto format_verification(const Verification& v) -> std::string {
   for (size_t i = 0; i < v.splits.size(); i++) {
     out << (i ? ",\n" : "\n") << "    {\"name\": " << json_string(v.splits[i].name) << ", \"time\": " << times_json(v.splits[i].time) << "}";
   }
-  out << (v.splits.empty() ? "]\n" : "\n  ]\n") << "}\n";
+  out << (v.splits.empty() ? "]" : "\n  ]");
+  if (v.movie) {
+    out << ",\n  \"movie\": {\"file\": " << json_string(v.movie->file) << ", \"sha1\": " << json_string(v.movie->sha1)
+        << ", \"start\": " << json_string(info(MovieStart::PowerOn).key) << ", \"frames\": " << v.movie->frames
+        << ", \"rerecords\": " << v.movie->rerecords << "}";
+  }
+  out << "\n}\n";
   return out.str();
 }
 

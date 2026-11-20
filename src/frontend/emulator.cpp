@@ -4,6 +4,7 @@
 #include "snes/system.hpp"
 #include "speedrun/race.hpp"
 #include "utils/logging.hpp"
+#include "utils/sha1.hpp"
 
 #include <algorithm>
 #include <array>
@@ -62,12 +63,44 @@ auto write_file(const std::string& path, std::span<const uint8_t> data) -> bool 
 constexpr int kSweepWidth = 4;
 constexpr int kBarsHeightPercent = 75;
 
+// A rewind snapshot: the frame counter, the movie frame (kNoMovieFrame outside a movie), then
+// the machine.
+constexpr size_t kSnapshotHeader = 2 * sizeof(uint64_t);
+constexpr uint64_t kNoMovieFrame = ~0ull;
+
+auto put_u64(std::vector<uint8_t>& out, uint64_t v) -> void {
+    for (size_t i = 0; i < sizeof(uint64_t); i++) out.push_back(static_cast<uint8_t>(v >> (8 * i)));
+}
+
+auto get_u64(std::span<const uint8_t> in, size_t at) -> uint64_t {
+    uint64_t v = 0;
+    for (size_t i = 0; i < sizeof(uint64_t); i++) v |= static_cast<uint64_t>(in[at + i]) << (8 * i);
+    return v;
+}
+
+// The state's movie (if `movie`, its first `frames` frames) beside it, or no stale one.
+auto write_state_movie(const std::string& state_path, const speedrun::Movie* movie, size_t frames) -> bool {
+    const std::string path = speedrun::state_movie_path(state_path);
+    if (movie) return speedrun::write_movie(path, *movie, frames);
+    std::error_code ec;
+    fs::remove(path, ec);
+    return true;
+}
+
 } // namespace
 
 Emulator::Emulator() = default;
 Emulator::~Emulator() { unload(); }
 
 auto Emulator::load(const std::string& path) -> bool {
+    // Another game, or this one afresh: a movie ends (a recording is written) first.
+    if (const std::string why = stop_movie(); !why.empty()) utils::Logger::error(utils::LogChannel::Rom, "Movie: %s", why.c_str());
+    return boot(path, true);
+}
+
+// Loads and boots `path`. Without `battery` its battery save and clock file are left alone,
+// now and until the next boot with one (a movie).
+auto Emulator::boot(const std::string& path, bool battery) -> bool {
     auto system = std::make_unique<System>();
     system->set_firmware_dir((fs::path(data_dir_) / kFirmwareFolder).string());
     last_error_.clear();
@@ -81,11 +114,16 @@ auto Emulator::load(const std::string& path) -> bool {
     last_warning_ = system->load_warning();
     system->reset();
 
-    unload();  // flushes the previous game's SRAM
+    close_game();  // flushes the previous game's SRAM
+    battery_off_ = !battery;
     system_ = std::move(system);
     rom_path_ = path;
     rom_name_ = std::filesystem::path(path).filename().string();
-    load_sram();
+    rom_sha1_ = {};
+    if (const auto file = read_file(path)) rom_sha1_ = utils::sha1(*file);
+    capture_input();
+    if (battery) load_sram();
+    else system_->clear_sram_dirty();
     load_cheats();
     load_watches();
     poked_ = false;
@@ -102,6 +140,11 @@ auto Emulator::load(const std::string& path) -> bool {
 }
 
 auto Emulator::unload() -> void {
+    if (const std::string why = stop_movie(); !why.empty()) utils::Logger::error(utils::LogChannel::Rom, "Movie: %s", why.c_str());
+    close_game();
+}
+
+auto Emulator::close_game() -> void {
     flush_sram();
     system_.reset();
     rom_path_.clear();
@@ -111,6 +154,15 @@ auto Emulator::unload() -> void {
 
 auto Emulator::reset() -> void {
     if (!system_) return;
+    if (movie_mode_ == MovieMode::Playing) {
+        utils::Logger::info(utils::LogChannel::Rom, "Reset ignored: a movie is playing (its own resets are in it)");
+        return;
+    }
+    if (movie_mode_ == MovieMode::Recording) pending_events_ |= speedrun::kEventReset;
+    reset_machine();
+}
+
+auto Emulator::reset_machine() -> void {
     system_->reset();
     frames_ = 0;
     jump_ = speedrun::Jump::Reset;
@@ -119,9 +171,10 @@ auto Emulator::reset() -> void {
 
 auto Emulator::power_cycle() -> bool {
     if (!system_) return false;
-    const std::string path = rom_path_;  // load() replaces it
+    const std::string path = rom_path_;  // boot() replaces it
     utils::Logger::info(utils::LogChannel::Rom, "Power cycle");
-    return load(path);
+    if (movie_mode_ == MovieMode::Recording) pending_events_ |= speedrun::kEventPower;
+    return boot(path, !battery_off_);
 }
 
 auto Emulator::set_race(bool on) -> void {
@@ -130,6 +183,8 @@ auto Emulator::set_race(bool on) -> void {
     utils::Logger::info(utils::LogChannel::Rom, "Race mode %s", on ? "on" : "off");
     if (!system_) return;
     if (on) {
+        // A race starts from power-on with nothing before it, so a movie ends here.
+        if (const std::string why = stop_movie(); !why.empty()) utils::Logger::error(utils::LogChannel::Rom, "Movie: %s", why.c_str());
         power_cycle();  // also drops freezes and the hand-edit mark; load_cheats() holds the cheats back
     } else {
         apply_cheats();
@@ -138,6 +193,9 @@ auto Emulator::set_race(bool on) -> void {
 
 auto Emulator::run_frame() -> void {
     if (!system_) return;
+    const speedrun::FrameInput in = next_input();  // a movie's power cycle reboots the game here
+    if (!system_) return;
+    apply_input(in);
     apply_freezes();
     system_->run_frame();
     frames_++;
@@ -164,28 +222,218 @@ auto Emulator::framebuffer() const -> const uint32_t* {
     return seen_output_ ? system_->get_framebuffer() : test_pattern_.data();
 }
 
-auto Emulator::set_joypad(int port, uint16_t state) -> void {
-    if (system_) system_->set_joypad_state(port, state);
-}
+// ---- Input: what the frontend sets is collected in input_ and goes to the ports at the start
+// of the next frame, the one way in for live input and a movie alike.
+
+namespace {
+auto port_valid(int port) -> bool { return port >= 0 && port < static_cast<int>(speedrun::kMoviePorts); }
+}  // namespace
+
+auto Emulator::set_joypad(int port, uint16_t state) -> void { set_pad(port, 0, state); }
 
 auto Emulator::set_port_connected(int port, bool connected) -> void {
-    if (system_) system_->set_port_connected(port, connected);
+    if (!port_valid(port)) return;
+    speedrun::PortInput& p = input_.ports[static_cast<size_t>(port)];
+    if (!connected) p = {bitforge::Device::None, {}};
+    else if (p.device == bitforge::Device::None) p.device = bitforge::Device::Gamepad;
 }
 
 auto Emulator::set_port_device(int port, bitforge::Device device) -> void {
-    if (system_) system_->set_port_device(port, device);
+    if (port_valid(port)) input_.ports[static_cast<size_t>(port)].device = device;
 }
 
 auto Emulator::set_pad(int port, int slot, uint16_t state) -> void {
-    if (system_) system_->set_pad(port, slot, state);
+    if (port_valid(port) && slot >= 0 && slot < bitforge::kMultitapSlots) {
+        input_.ports[static_cast<size_t>(port)].words[static_cast<size_t>(slot)] = state;
+    }
 }
 
 auto Emulator::add_mouse(int port, int dx, int dy, bool left, bool right) -> void {
-    if (system_) system_->add_mouse(port, dx, dy, left, right);
+    if (!port_valid(port)) return;
+    speedrun::PortInput& p = input_.ports[static_cast<size_t>(port)];
+    if (p.device != bitforge::Device::Mouse) return;
+    p = speedrun::mouse_input(static_cast<int16_t>(p.words[0]) + dx, static_cast<int16_t>(p.words[1]) + dy, left, right);
 }
 
 auto Emulator::set_scope(int port, const bitforge::ScopeInput& input) -> void {
-    if (system_) system_->set_scope(port, input);
+    if (port_valid(port) && input_.ports[static_cast<size_t>(port)].device == bitforge::Device::SuperScope) {
+        input_.ports[static_cast<size_t>(port)] = speedrun::scope_input(input);
+    }
+}
+
+auto Emulator::capture_input() -> void {
+    input_ = {};
+    for (size_t p = 0; p < speedrun::kMoviePorts; p++) {
+        const bitforge::ControllerPort& port = system_->controller(static_cast<int>(p));
+        speedrun::PortInput& in = input_.ports[p];
+        in.device = port.device();
+        for (int s = 0; s < bitforge::kMultitapSlots; s++) in.words[static_cast<size_t>(s)] = port.pad(s);
+        if (in.device == bitforge::Device::Mouse) in = speedrun::mouse_input(0, 0, false, false);
+        if (in.device == bitforge::Device::SuperScope) in = speedrun::scope_input(port.scope());
+    }
+}
+
+// The movie's next frame (its reset or power cycle done first), else the frontend's input with
+// the reset or power cycle since the last frame, recorded if a movie is recording.
+auto Emulator::next_input() -> speedrun::FrameInput {
+    if (movie_at_end()) {
+        utils::Logger::info(utils::LogChannel::Rom, "Movie finished (%zu frames): live input from here", movie_.frames.size());
+        stop_movie();
+    }
+    if (movie_mode_ == MovieMode::Playing) {
+        const speedrun::FrameInput in = movie_.frames[movie_cursor_++];
+        if ((in.events & speedrun::kEventPower) && !boot(std::string(rom_path_), false)) return in;
+        if (in.events & speedrun::kEventReset) reset_machine();
+        return in;
+    }
+    speedrun::FrameInput in = input_;
+    in.events = std::exchange(pending_events_, uint8_t{0});
+    for (speedrun::PortInput& p : in.ports) {
+        std::fill(p.words.begin() + static_cast<std::ptrdiff_t>(speedrun::device_words(p.device)), p.words.end(), uint16_t{0});
+    }
+    for (speedrun::PortInput& p : input_.ports) {
+        if (p.device == bitforge::Device::Mouse) p.words[0] = p.words[1] = 0;  // the motion went with this frame
+    }
+    if (movie_mode_ == MovieMode::Recording) {
+        movie_.frames.resize(movie_cursor_);
+        movie_.frames.push_back(in);
+        movie_cursor_++;
+        if (!race_) movie_.race = false;
+    }
+    return in;
+}
+
+auto Emulator::apply_input(const speedrun::FrameInput& in) -> void {
+    for (size_t i = 0; i < in.ports.size(); i++) {
+        const int port = static_cast<int>(i);
+        const speedrun::PortInput& p = in.ports[i];
+        system_->set_port_device(port, p.device);
+        switch (p.device) {
+        case bitforge::Device::None:
+            system_->set_pad(port, 0, 0);
+            break;
+        case bitforge::Device::Gamepad:
+        case bitforge::Device::Multitap:
+            for (size_t s = 0; s < speedrun::device_words(p.device); s++) system_->set_pad(port, static_cast<int>(s), p.words[s]);
+            break;
+        case bitforge::Device::Mouse:
+            system_->add_mouse(port, static_cast<int16_t>(p.words[0]), static_cast<int16_t>(p.words[1]), p.words[2] & 1, p.words[2] & 2);
+            break;
+        case bitforge::Device::SuperScope:
+            system_->set_scope(port, speedrun::scope_from(p));
+            break;
+        }
+    }
+}
+
+// ---- Movies ------------------------------------------------------------------------------------
+
+auto Emulator::record_movie(speedrun::MovieStart start, const std::string& path, const MovieMeta& meta) -> std::string {
+    if (!system_) return "no game is running";
+    if (start == speedrun::MovieStart::SaveState && !speedrun::race_allows(race_, speedrun::Guard::SaveState)) {
+        return speedrun::blocked_message(speedrun::Guard::SaveState);
+    }
+    std::string why = stop_movie();
+    speedrun::Movie m;
+    m.id = speedrun::new_movie_id();
+    m.start = start;
+    m.race = race_;
+    m.standard = video_standard();
+    m.rom_crc32 = rom_crc32();
+    m.rom_sha1 = rom_sha1_;
+    m.recorded = unix_now();
+    m.emulator = meta.emulator;
+    m.rom_file = rom_name_;
+    m.author = meta.author;
+    flush_sram();  // the real battery save as it is, before the movie's blank one
+    if (start == speedrun::MovieStart::PowerOn) {
+        if (!boot(std::string(rom_path_), false)) return "could not restart " + rom_name_;
+    } else {
+        battery_off_ = true;  // the state has the save; the file stays as it is
+        m.state = savestate::encode_from_state(system_->rom_crc32(), frames_, unix_now(), nullptr, 0, 0, system_->save_state());
+    }
+    movie_ = std::move(m);
+    movie_mode_ = MovieMode::Recording;
+    movie_cursor_ = 0;
+    movie_path_ = path;
+    pending_events_ = 0;
+    utils::Logger::info(utils::LogChannel::Rom, "Movie: recording %s to %s", std::string(speedrun::info(start).label).c_str(), path.c_str());
+    return why;
+}
+
+auto Emulator::play_movie(speedrun::Movie movie, const std::string& path) -> std::string {
+    if (!system_) return "no game is running";
+    if (movie.start == speedrun::MovieStart::SaveState && !speedrun::race_allows(race_, speedrun::Guard::LoadState)) {
+        return speedrun::blocked_message(speedrun::Guard::LoadState);
+    }
+    if (const std::string why = stop_movie(); !why.empty()) utils::Logger::error(utils::LogChannel::Rom, "Movie: %s", why.c_str());
+    flush_sram();
+    if (movie.start == speedrun::MovieStart::PowerOn) {
+        if (!boot(std::string(rom_path_), false)) return "could not restart " + rom_name_;
+    } else {
+        std::string why;
+        if (!restore(movie.state, why)) return "its start state: " + why;
+        battery_off_ = true;
+    }
+    movie_ = std::move(movie);
+    movie_mode_ = MovieMode::Playing;
+    movie_cursor_ = 0;
+    movie_path_ = path;
+    pending_events_ = 0;
+    utils::Logger::info(utils::LogChannel::Rom, "Movie: playing %s (%zu frames, %u rerecords)", path.c_str(), movie_.frames.size(),
+                        movie_.rerecords);
+    return {};
+}
+
+auto Emulator::stop_movie() -> std::string {
+    if (movie_mode_ == MovieMode::Off) return {};
+    std::string why;
+    if (movie_mode_ == MovieMode::Recording && !movie_path_.empty()) {
+        if (speedrun::write_movie(movie_path_, movie_, movie_cursor_)) {
+            utils::Logger::info(utils::LogChannel::Rom, "Movie: %zu frames, %u rerecords written to %s", movie_cursor_, movie_.rerecords,
+                                movie_path_.c_str());
+        } else {
+            why = "could not write " + movie_path_;
+        }
+    }
+    movie_ = {};
+    movie_mode_ = MovieMode::Off;
+    movie_cursor_ = 0;
+    movie_path_.clear();
+    pending_events_ = 0;
+    return why;
+}
+
+auto Emulator::movie_status() const -> MovieStatus {
+    MovieStatus s;
+    s.mode = movie_mode_;
+    s.frame = movie_cursor_;
+    s.frames = movie_.frames.size();
+    s.rerecords = movie_.rerecords;
+    s.read_only = movie_read_only_;
+    s.race = movie_.race;
+    s.start = movie_.start;
+    s.path = movie_path_;
+    return s;
+}
+
+auto Emulator::add_rerecord() -> void {
+    if (movie_mode_ == MovieMode::Recording) movie_.rerecords++;
+}
+
+auto Emulator::rewind_movie(uint64_t frame) -> void {
+    movie_cursor_ = static_cast<size_t>(frame);
+    if (movie_mode_ == MovieMode::Recording) movie_.frames.resize(movie_cursor_);
+}
+
+auto Emulator::rom_sha1_hex() const -> std::string {
+    static constexpr char kHex[] = "0123456789abcdef";
+    std::string out;
+    for (const uint8_t b : rom_sha1_) {
+        out += kHex[b >> 4];
+        out += kHex[b & 15];
+    }
+    return out;
 }
 
 auto Emulator::rom_stem() const -> std::string { return fs::path(rom_path_).stem().string(); }
@@ -211,11 +459,13 @@ auto Emulator::save_state(int slot) -> std::string {
     const std::vector<uint8_t> data = savestate::encode(*system_, frames_, timestamp, system_->get_framebuffer(),
                                                         width_, height_);
     const std::string path = state_path(slot);
-    if (!write_file(path, data)) {
+    const bool movie = movie_mode_ != MovieMode::Off;
+    if (!write_file(path, data) || !write_state_movie(path, movie ? &movie_ : nullptr, movie_cursor_)) {
         utils::Logger::error(utils::LogChannel::State, "Could not write %s", path.c_str());
         return "could not write " + path;
     }
-    utils::Logger::info(utils::LogChannel::State, "Saved state %d (%zu KB): %s", slot, data.size() / 1024, path.c_str());
+    utils::Logger::info(utils::LogChannel::State, "Saved state %d (%zu KB)%s: %s", slot, data.size() / 1024, movie ? " with the movie" : "",
+                        path.c_str());
     return {};
 }
 
@@ -228,15 +478,51 @@ auto Emulator::load_state(int slot) -> std::string {
         utils::Logger::info(utils::LogChannel::State, "State slot %d is empty", slot);
         return "slot " + std::to_string(slot) + " is empty";
     }
+    // During a movie a state goes back to its frame of the movie: it must have been saved in
+    // this movie, and in read-only mode on the same branch of it.
+    speedrun::Movie branch;
+    const bool movie = movie_mode_ != MovieMode::Off;
+    if (movie) {
+        const std::string slot_name = "state " + std::to_string(slot);
+        if (!speedrun::read_movie(speedrun::state_movie_path(path), branch).empty() || branch.id != movie_.id) {
+            return slot_name + " wasn't saved during this movie";
+        }
+        if (movie_read_only_ && !speedrun::is_prefix(branch.frames, movie_.frames)) {
+            return slot_name + " is from another take of this movie (turn read-only off to record from it)";
+        }
+    }
+    std::string why;
+    if (!restore(*data, why)) {
+        why = "Can't load state " + std::to_string(slot) + ": " + why;
+        utils::Logger::warning(utils::LogChannel::State, "%s [%s]", why.c_str(), path.c_str());
+        return why;
+    }
+    if (movie) {
+        movie_cursor_ = branch.frames.size();
+        if (movie_read_only_) {
+            movie_mode_ = MovieMode::Playing;
+        } else {
+            movie_.frames = std::move(branch.frames);
+            movie_.rerecords++;
+            movie_mode_ = MovieMode::Recording;
+        }
+        utils::Logger::info(utils::LogChannel::Rom, "Movie: %s from frame %zu (%u rerecords)", movie_read_only_ ? "playing" : "recording",
+                            movie_cursor_, movie_.rerecords);
+    }
+    utils::Logger::info(utils::LogChannel::State, "Loaded state %d: %s", slot, path.c_str());
+    return {};
+}
+
+// A save-state file into the machine: false (and `why`) if it doesn't fit this game or build.
+auto Emulator::restore(std::span<const uint8_t> file, std::string& why) -> bool {
     savestate::Info info;
-    const savestate::Result result = savestate::decode(*system_, *data, info);
+    const savestate::Result result = savestate::decode(*system_, file, info);
     if (result != savestate::Result::Ok) {
-        std::string why = "Can't load state " + std::to_string(slot) + ": " + savestate::describe(result);
+        why = savestate::describe(result);
         if (result == savestate::Result::WrongVersion) {
             why += " (file v" + std::to_string(info.version) + ", this build v" + std::to_string(savestate::kVersion) + ")";
         }
-        utils::Logger::warning(utils::LogChannel::State, "%s [%s]", why.c_str(), path.c_str());
-        return why;
+        return false;
     }
     frames_ = info.frame;
     jump_ = speedrun::Jump::Load;
@@ -245,25 +531,28 @@ auto Emulator::load_state(int slot) -> std::string {
     width_ = w;
     height_ = h;
     seen_output_ = true;
-    utils::Logger::info(utils::LogChannel::State, "Loaded state %d: %s", slot, path.c_str());
-    return {};
+    return true;
 }
 
 auto Emulator::save_snapshot() -> std::vector<uint8_t> {
     if (!system_) return {};
-    std::vector<uint8_t> data(sizeof(uint64_t));
-    for (size_t i = 0; i < sizeof(uint64_t); i++) data[i] = static_cast<uint8_t>(frames_ >> (8 * i));
+    std::vector<uint8_t> data;
+    put_u64(data, frames_);
+    put_u64(data, movie_mode_ != MovieMode::Off ? movie_cursor_ : kNoMovieFrame);
     const std::vector<uint8_t> state = system_->save_state();
     data.insert(data.end(), state.begin(), state.end());
     return data;
 }
 
 auto Emulator::load_snapshot(std::span<const uint8_t> data) -> bool {
-    if (!system_ || data.size() <= sizeof(uint64_t)) return false;
+    if (!system_ || data.size() <= kSnapshotHeader) return false;
     if (!speedrun::race_allows(race_, speedrun::Guard::Rewind)) return false;  // rewind and the timeline
-    if (!system_->load_state(data.subspan(sizeof(uint64_t)))) return false;
-    frames_ = 0;
-    for (size_t i = 0; i < sizeof(uint64_t); i++) frames_ |= static_cast<uint64_t>(data[i]) << (8 * i);
+    const uint64_t movie_frame = get_u64(data, sizeof(uint64_t));
+    const bool movie = movie_mode_ != MovieMode::Off;
+    if (movie && (movie_frame == kNoMovieFrame || movie_frame > movie_.frames.size())) return false;  // from before the movie
+    if (!system_->load_state(data.subspan(kSnapshotHeader))) return false;
+    frames_ = get_u64(data, 0);
+    if (movie) rewind_movie(movie_frame);
     jump_ = speedrun::Jump::Rewind;
     readings_.clear();
     const auto [w, h] = system_->get_framebuffer_size();
@@ -278,15 +567,16 @@ auto Emulator::save_snapshot_to_slot(int slot, std::span<const uint8_t> snapshot
     if (!system_) return "no game is running";
     if (!speedrun::race_allows(race_, speedrun::Guard::Timeline)) return speedrun::blocked_message(speedrun::Guard::Timeline);
     if (slot < 1 || slot > kStateSlots) return "that slot does not exist";
-    if (snapshot.size() <= sizeof(uint64_t)) return "that moment is no longer in the timeline";
-    uint64_t frame = 0;
-    for (size_t i = 0; i < sizeof(uint64_t); i++) frame |= static_cast<uint64_t>(snapshot[i]) << (8 * i);
+    if (snapshot.size() <= kSnapshotHeader) return "that moment is no longer in the timeline";
+    const uint64_t frame = get_u64(snapshot, 0);
+    const uint64_t movie_frame = get_u64(snapshot, sizeof(uint64_t));
+    const bool movie = movie_mode_ != MovieMode::Off && movie_frame != kNoMovieFrame && movie_frame <= movie_.frames.size();
     const bool have_thumb = thumb && thumb_w > 0 && thumb_h > 0;
     const std::vector<uint8_t> data = savestate::encode_from_state(
         system_->rom_crc32(), frame, unix_now(), have_thumb ? thumb : nullptr, have_thumb ? thumb_w : 0,
-        have_thumb ? thumb_h : 0, snapshot.subspan(sizeof(uint64_t)));
+        have_thumb ? thumb_h : 0, snapshot.subspan(kSnapshotHeader));
     const std::string path = state_path(slot);
-    if (!write_file(path, data)) {
+    if (!write_file(path, data) || !write_state_movie(path, movie ? &movie_ : nullptr, movie ? movie_frame : 0)) {
         utils::Logger::error(utils::LogChannel::State, "Could not write %s", path.c_str());
         return "could not write " + path;
     }
@@ -428,7 +718,7 @@ auto Emulator::memory_tampered() const -> uint32_t {
 }
 
 auto Emulator::step_timer(speedrun::RunTimer& timer, const speedrun::Clock& now) -> speedrun::Event {
-    const speedrun::FrameInfo frame{frames_, take_jump(), memory_tampered(), now, race_};
+    const speedrun::FrameInfo frame{frames_, take_jump(), memory_tampered(), now, race_, movie_mode_ == MovieMode::Playing};
     return timer.on_frame(frame, [this](const debug::Condition& c) { return evaluate(c); });
 }
 
@@ -481,7 +771,7 @@ auto Emulator::load_sram() -> void {
 }
 
 auto Emulator::flush_sram() -> void {
-    if (!system_) return;
+    if (!system_ || battery_off_) return;
     if (const auto clock = system_->rtc_save(unix_now()); !clock.empty() && !write_file(rtc_path(), clock)) {
         utils::Logger::error(utils::LogChannel::Rom, "Could not write clock file %s", rtc_path().c_str());
     }

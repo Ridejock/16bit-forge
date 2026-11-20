@@ -14,6 +14,7 @@
 #include "frontend/emu_thread.hpp"
 #include "frontend/thread_sync.hpp"
 #include "speedrun/autosplit.hpp"
+#include "speedrun/movie.hpp"
 #include "speedrun/race.hpp"
 #include "utils/logging.hpp"
 #include "utils/sha1.hpp"
@@ -732,6 +733,94 @@ auto test_race_mode() -> void {
     std::filesystem::remove_all(dir);
 }
 
+
+// A movie recorded in race mode from power-on, through a race verified run: the verification
+// file names the attempt's movie (movies/<rom>/attempt-<n>.bfm) and its SHA-1, which matches
+// the file. Played back, the same run shows REPLAY and writes no verification file.
+auto test_race_movie() -> void {
+    namespace sr = bitforge::speedrun;
+    constexpr uint64_t kTimeoutNs = 20'000'000'000ULL;
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "bitforge_thread_tests_movie";
+    std::filesystem::remove_all(dir);
+    EmuThread emu;
+    emu.core().emu.set_data_dir(dir.string());
+    emu.core().verify.emulator = "16bit Forge test";
+    emu.core().movie_end = sr::MovieEnd::Live;
+    const std::string rom = test_rom::write_test_rom(3);
+    emu.start();
+    CHECK(boot(emu, rom));
+    auto wait_for = [&emu](auto&& done) {
+        const uint64_t until = SDL_GetTicksNS() + kTimeoutNs;
+        while (SDL_GetTicksNS() < until) {
+            if (done(emu.status())) return true;
+            SDL_DelayNS(1'000'000);
+        }
+        return false;
+    };
+    CHECK(wait_for([](const EmuStatus& st) { return !st.splits_path.empty(); }));
+    const std::string take = (dir / "take.bfm").string();
+    const std::string why = emu.call([&take](EmuThread::Core& c) {
+        c.set_run(sr::make_run("Race", "Any%", 2));
+        c.set_race(true, EmuThread::timer_clock());
+        std::string error = c.record_movie(sr::MovieStart::PowerOn, take, "tester", EmuThread::timer_clock());
+        c.emu.set_joypad(0, 0x1000);
+        c.splits.timer.start(EmuThread::timer_clock());
+        return error;
+    });
+    CHECK(why.empty());
+    const EmuStatus rec = emu.status();
+    CHECK(rec.movie.mode == MovieMode::Recording && rec.movie.race && rec.race);
+    CHECK(wait_for([](const EmuStatus& st) { return st.timer.race_status() == sr::RaceStatus::Clean && st.timer.game_frames() > 10; }));
+    emu.call([](EmuThread::Core& c) {
+        c.emu.set_joypad(0, 0x8000);
+        c.splits.timer.split(EmuThread::timer_clock());
+    });
+    CHECK(wait_for([](const EmuStatus& st) { return st.timer.game_frames() > 20; }));
+    emu.call([](EmuThread::Core& c) { c.splits.timer.split(EmuThread::timer_clock()); });
+    CHECK(wait_for([](const EmuStatus& st) { return !st.verification_path.empty(); }));
+    const EmuStatus done = emu.status();
+    CHECK(done.timer.race_status() == sr::RaceStatus::Verified);
+    const std::string attempt = sr::attempt_movie_path(dir.string(), std::filesystem::path(rom).stem().string(), 1);
+    CHECK(std::filesystem::exists(attempt));
+    {
+        std::ifstream in(done.verification_path, std::ios::binary);
+        const std::string json((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        CHECK(json.find("\"movie\": {") != std::string::npos);
+        CHECK(json.find("attempt-1.bfm") != std::string::npos);
+        CHECK(json.find(bitforge::utils::sha1_file(attempt).value_or("?")) != std::string::npos);
+    }
+    sr::Movie movie;
+    CHECK(sr::read_movie(attempt, movie).empty());
+    CHECK(movie.verifiable() && movie.author == "tester" && movie.frames.size() > 20);
+
+    // Played back (race mode still on): REPLAY, never verified, no new file.
+    emu.call([](EmuThread::Core& c) {
+        c.splits.timer.reset(EmuThread::timer_clock());
+        c.splits.timer.resolve_pending(true);
+        c.emu.stop_movie();
+    });
+    const std::string first_json = done.verification_path;
+    const std::string play = emu.call([&movie, &attempt](EmuThread::Core& c) {
+        std::string error = c.play_movie(movie, attempt, EmuThread::timer_clock());
+        c.splits.timer.start(EmuThread::timer_clock());
+        return error;
+    });
+    CHECK(play.empty());
+    CHECK(emu.status().movie.mode == MovieMode::Playing);
+    CHECK(wait_for([](const EmuStatus& st) { return st.timer.race_status() == sr::RaceStatus::Replay && st.timer.game_frames() > 10; }));
+    emu.call([](EmuThread::Core& c) { c.splits.timer.split(EmuThread::timer_clock()); });
+    CHECK(wait_for([](const EmuStatus& st) { return st.timer.game_frames() > 20; }));
+    emu.call([](EmuThread::Core& c) { c.splits.timer.split(EmuThread::timer_clock()); });
+    CHECK(wait_for([](const EmuStatus& st) { return st.timer.state() == sr::TimerState::Ended; }));
+    SDL_DelayNS(100'000'000);
+    const EmuStatus replayed = emu.status();
+    CHECK(replayed.timer.race_status() == sr::RaceStatus::Replay);
+    CHECK(!std::filesystem::exists(sr::verification_path(replayed.splits_path, 2)));
+    CHECK(wait_for([](const EmuStatus& st) { return st.movie.mode == MovieMode::Off && st.movie_ends == 1; }));  // Live: closed
+    emu.stop();
+    std::filesystem::remove_all(dir);
+}
+
 }  // namespace
 
 int main() {
@@ -747,6 +836,7 @@ int main() {
         {"emu thread: memory image, writes, freezes", test_memory_view},
         {"emu thread: run timer, auto-splits, rewind, splits file", test_run_timer},
         {"emu thread: race mode gating, verified run, file", test_race_mode},
+        {"emu thread: race movie attached, replay not verified", test_race_movie},
         {"harness: UI stalls 170 ms, timer pacing", test_harness_timer},
         {"harness: UI stalls 170 ms, audio-sync pacing", test_harness_audio_sync},
         {"harness: same stalls on the emu thread (control)", test_harness_control},

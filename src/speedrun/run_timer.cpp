@@ -59,6 +59,7 @@ auto RunTimer::clear_attempt() -> void {
   tamper_ = 0;
   race_run_ = false;
   race_breaks_ = 0;
+  replay_run_ = false;
 }
 
 auto RunTimer::event(Action action, int segment, bool automatic, uint64_t frame) -> Event {
@@ -76,6 +77,7 @@ auto RunTimer::start(const Clock& now) -> Event {
   start_mono_ = now.mono;
   started_unix_ = now.unix_seconds;
   race_run_ = race_;
+  replay_run_ = replaying_;
   mutate_run().attempt_count++;
   return event(Action::Start, 0);
 }
@@ -222,8 +224,10 @@ auto RunTimer::on_frame(const FrameInfo& f, const ConditionTest& test) -> Event 
     }
   }
   set_race(f.race);
+  replaying_ = f.replay;
   if (state_ == TimerState::Running || state_ == TimerState::Paused) {
     tamper_ |= f.tamper;
+    replay_run_ |= f.replay;
     if (race_run_ && (f.jump == Jump::Load || f.jump == Jump::Rewind)) race_breaks_ |= kBreakJump;
     if (race_run_ && !race_) race_breaks_ |= kBreakRaceOff;  // e.g. an undo after the finish, race mode off since
   }
@@ -260,6 +264,7 @@ auto RunTimer::set_race(bool on) -> void {
 auto RunTimer::race_breaks() const -> uint32_t { return race_breaks_ | (tamper_ ? kBreakTamper : 0u); }
 
 auto RunTimer::race_status() const -> RaceStatus {
+  if (active() && replay_run_) return RaceStatus::Replay;
   if (!active() || !race_run_) return RaceStatus::Off;
   if (race_breaks() != 0) return RaceStatus::Broken;
   return state_ == TimerState::Ended ? RaceStatus::Verified : RaceStatus::Clean;
