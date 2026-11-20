@@ -90,19 +90,15 @@ public:
   // The System wraps each CPU instruction in these. end_cpu_step() returns every master clock
   // spent since the last call: the instruction's memory accesses at their speeds, its internal
   // cycles at 6 clocks, and any DMA/HDMA time stolen in between.
-  auto begin_cpu_step() -> void {
-    cpu_accesses = 0;
-    in_cpu_step = true;
-    rdnmi_read_early = timeup_read_early = false;  // the PPU has run past the last instruction
-    nmi_blocked = nmi_fresh;  // a V-blank NMI raised during the last instruction waits one more
-    nmi_fresh = false;
-  }
+  auto begin_cpu_step() -> void;
   auto end_cpu_step(int cpu_cycles) -> uint64_t;
 
   // ---- PPU callbacks ------------------------------------------------------------------------
-  auto on_vblank_start() -> void;
+  auto on_vblank_start() -> void;  // H=0: the V-blank flag and the auto-joypad latch
+  auto on_vblank_nmi() -> void;    // H=0.5: the NMI flag and /NMI (on_clock calls it)
   auto on_vblank_end() -> void;
-  // The PPU advanced line `v` from master clock `from` to `to` (to <= 1364): H/V IRQ checks.
+  // The PPU advanced line `v` from master clock `from` to `to` (to <= 1364): the NMI point and
+  // the H/V IRQ. An event at clock t happens in the run with from < t <= to.
   auto on_clock(int v, int from, int to) -> void;
   auto hdma_init() -> void;       // line 0: reload every enabled channel's table
   auto hdma_run_line() -> void;   // H-blank of lines 0..224 (or 239)
@@ -116,7 +112,11 @@ public:
   auto poll_nmi() -> bool override;
   // Level IRQ line: held while TIMEUP ($4211) bit 7 is set, or by a cartridge coprocessor
   // (Super FX STOP, SA-1 messages and DMA).
-  auto irq_pending() const -> bool override { return (timeup & 0x80) != 0 || cartridge->irq(); }
+  // A timer IRQ that rose during the last instruction's final cycle waits one more instruction
+  // (the CPU checks just before that cycle).
+  auto irq_pending() const -> bool override { return ((timeup & 0x80) != 0 && !irq_late) || cartridge->irq(); }
+  // WAI ends kWaiExitClocks after the interrupt line went low; charged here, from that moment.
+  auto end_wait() -> int override;
 
   // Controller ports 0 and 1 (the console's 1 and 2). A pad word is what auto-read leaves in
   // $4218/$4219 for a gamepad: B Y Sel Start U D L R A X L R 0 0 0 0. Port 1 starts with a
@@ -198,8 +198,18 @@ private:
   // before an NMI handler that also reads it (Final Fantasy III's song wait at $C0:B7A0).
   // Without this the loop misses whenever V-blank starts during its BPL; with our
   // approximate CPU timing that phase can repeat every frame and the loop never exits.
+  // Hardware holds the NMI only when /NMI falls in the instruction's final cycle (as irq_late
+  // does for the IRQ); this holds it every time, so otherwise it comes one instruction late.
+  // A CPU in WAI isn't held (see end_wait()).
   bool nmi_fresh = false;    // raised since the last begin_cpu_step()
   bool nmi_blocked = false;  // held for the current step
+  // Interrupt edges in master clocks since power-on (bus_clock: as far as the PPU has run).
+  uint64_t bus_clock = 0;
+  uint64_t nmi_edge = 0;
+  uint64_t irq_edge = 0;
+  int last_access_clocks = 0;  // the latest CPU access of this instruction
+  int last_cycle_clocks = 0;   // the final cycle of the last instruction
+  bool irq_late = false;       // the timer IRQ rose in that final cycle
   
   enum class MemoryRegion {
     WRAM,
@@ -225,7 +235,9 @@ private:
   // The PPU runs after each instruction, so a $4210/$4211 read sees the flags as they were when
   // the instruction began. These look ahead over the clocks the instruction has used so far.
   auto clocks_ahead() const -> uint64_t { return in_cpu_step ? pending_clocks : 0; }
-  auto timer_hits(int v, int from, int to) const -> bool;     // H/V timer fires in [from, to) of line v
+  auto raise_nmi(uint64_t at) -> void;
+  auto timer_point(int v, bool next) const -> int;            // where the H/V timer fires in line v, or -1
+  auto timer_hits(int v, int from, int to, bool next = false) const -> bool;  // ... in (from, to]
   auto timer_fires_within(uint64_t clocks) const -> bool;
   auto hdma_reload(DMAChannel& ch) -> void;
   auto dma_transfer_unit(DMAChannel& ch, Address a_addr, int index) -> void;

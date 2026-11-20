@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "debug/timing_check.hpp"
 
+#include "snes/cpu/cpu65c816.hpp"
 #include "snes/memory/bus.hpp"
 #include "snes/ppu/ppu.hpp"
 #include "snes/system.hpp"
@@ -134,24 +135,157 @@ auto nmi_clock() -> double {
 constexpr int kVtime = 100;
 constexpr int kHtime = 100;
 
-auto virq_clock() -> double {
-  Rig r;
-  r.write(0x4209, kVtime);
-  r.write(0x420A, 0);
+auto virq_at(Rig& r, int vtime) -> int64_t {
+  r.write(0x4209, static_cast<Byte>(vtime & 0xFF));
+  r.write(0x420A, static_cast<Byte>(vtime >> 8));
   r.write(0x4200, 0x20);
-  r.run_to(kVtime - 1, 0);
-  return static_cast<double>(r.first(kVtime, [&] { return r.bus.irq_pending(); }));
+  r.run_to(vtime - 1, 0);
+  return r.first(vtime, [&] { return r.bus.irq_pending(); });
 }
 
-auto hirq_clock() -> double {
+auto virq_clock() -> double {
   Rig r;
-  r.write(0x4207, kHtime);
-  r.write(0x4208, 0);
+  return static_cast<double>(virq_at(r, kVtime));
+}
+
+// V-IRQ on line 241 of a field-1 frame: the line before it is the short one.
+auto virq_after_short_line() -> double {
+  Rig r;
+  r.frame();
+  return static_cast<double>(virq_at(r, timing::kShortLine + 1));
+}
+
+auto hirq_at(int htime) -> int64_t {
+  Rig r;
+  r.write(0x4207, static_cast<Byte>(htime & 0xFF));
+  r.write(0x4208, static_cast<Byte>(htime >> 8));
   r.write(0x4200, 0x10);
   r.run_to(50, 0);
   r.bus.read(0x4211);  // acknowledge the IRQs of the lines before
-  return static_cast<double>(r.first(50, [&] { return r.bus.irq_pending(); }) - kHtime * 4);
+  return r.first(50, [&] { return r.bus.irq_pending(); }) - htime * 4;
 }
+auto hirq_clock() -> double { return static_cast<double>(hirq_at(kHtime)); }
+auto hirq_long_dots() -> double { return static_cast<double>(hirq_at(330)); }
+
+// The S-CPU on a built-in LoROM program (SlowROM, stack in WRAM), stepped an instruction at a
+// time as System::run_frame does.
+constexpr Word kHandler = 0x9000;
+struct CpuRig {
+  memory::Bus bus;
+  ppu::PPU ppu;
+  cpu::CPU65c816 cpu{bus};
+
+  explicit CpuRig(const std::vector<Byte>& code, bool native = true, const std::vector<Byte>& handler = {}) {
+    std::vector<Byte> rom(0x8000, 0xEA);  // NOPs, by default in the handler too
+    std::copy(code.begin(), code.end(), rom.begin());
+    std::copy(handler.begin(), handler.end(), rom.begin() + (kHandler - 0x8000));
+    for (const size_t vector : {size_t{0x7FEA}, size_t{0x7FEE}, size_t{0x7FFA}, size_t{0x7FFE}}) {
+      rom[vector] = static_cast<Byte>(kHandler & 0xFF);
+      rom[vector + 1] = static_cast<Byte>(kHandler >> 8);
+    }
+    rom[0x7FFC] = 0x00;
+    rom[0x7FFD] = 0x80;
+    bus.connect_cpu(&cpu);
+    bus.connect_ppu(&ppu);
+    ppu.connect_bus(&bus);
+    bus.load_test_rom(rom);
+    bus.reset();
+    ppu.reset();
+    cpu.reset();
+    cpu::Registers regs = cpu.registers();
+    regs.emulation = !native;
+    regs.sp = native ? 0x1FFF : 0x01FF;
+    regs.p = 0x30;  // 8-bit A and index, I clear
+    cpu.set_registers(regs);
+  }
+  auto step() -> int64_t {
+    bus.begin_cpu_step();
+    const int cycles = cpu.step();
+    const auto clocks = static_cast<uint32_t>(bus.end_cpu_step(cycles));
+    ppu.step(clocks);
+    return clocks;
+  }
+  auto in_handler() const -> bool { return cpu.registers().pc == kHandler; }
+  // Register writes from here count as no instruction's time.
+  auto write(Address a, Byte value) -> void {
+    bus.write(a, value);
+    bus.begin_cpu_step();
+    bus.end_cpu_step(0);
+  }
+  // Line `v`, clock `c`, with the PPU alone.
+  auto run_to(int v, int c) -> void {
+    while (ppu.vcounter() != v || ppu.hclock() != c) ppu.step(1);
+  }
+  auto position(int v) const -> int64_t { return (ppu.vcounter() - v) * int64_t{timing::kLineClocks} + ppu.hclock(); }
+};
+
+// Master clocks of the IRQ sequence itself (V-IRQ at line 5, the main program on NOPs).
+auto irq_sequence(bool native) -> double {
+  CpuRig r({}, native);
+  r.write(0x4209, 5);
+  r.write(0x420A, 0);
+  r.write(0x4200, 0x20);
+  for (int i = 0; i < 100'000; i++) {
+    const int64_t clocks = r.step();
+    if (r.in_handler()) return static_cast<double>(clocks);
+  }
+  return -1;
+}
+auto irq_sequence_native() -> double { return irq_sequence(true); }
+auto irq_sequence_emulation() -> double { return irq_sequence(false); }
+
+// WAI: from the V-IRQ's rise to the start of the IRQ sequence (the handler's start, less the
+// sequence).
+auto wai_exit() -> double {
+  CpuRig r({0xCB});  // WAI
+  r.write(0x4209, 5);
+  r.write(0x420A, 0);
+  r.write(0x4200, 0x20);
+  for (int i = 0; i < 100'000; i++) {
+    const int64_t start = r.position(5);
+    const int64_t clocks = r.step();
+    if (r.in_handler()) return static_cast<double>(start + clocks) - virq_clock() - irq_sequence_native();
+  }
+  return -1;
+}
+
+// Anomie's CLI example: SEI; WAI (woken by the masked IRQ); STZ $00; LDA #$01; CLI; LDA #$42;
+// STP, the handler STA $00 / STP. $00 = $42: one instruction ran after CLI before the IRQ.
+auto cli_latency() -> double {
+  CpuRig r({0x78, 0xCB, 0x64, 0x00, 0xA9, 0x01, 0x58, 0xA9, 0x42, 0xDB}, true, {0x85, 0x00, 0xDB});
+  r.write(0x4209, 5);
+  r.write(0x420A, 0);
+  r.write(0x4200, 0x20);
+  for (int i = 0; i < 100'000 && !r.cpu.stopped(); i++) r.step();
+  const Byte stored = r.bus.peek_wram(0);
+  return stored == 0x42 ? 1 : (stored == 0x01 ? 0 : -1);
+}
+
+// Instructions the CPU runs after the one in which the interrupt line falls, before it takes
+// the interrupt. The edge lands `offset` clocks into a NOP (14 clocks: an 8-clock fetch, then a
+// 6-clock internal cycle, the final one).
+auto instructions_before(bool nmi, int offset) -> double {
+  CpuRig r({});
+  const int line = nmi ? 225 : 5;
+  const int64_t edge = nmi ? timing::kNmiClock : static_cast<int64_t>(virq_clock());
+  r.write(0x4209, 5);
+  r.write(0x420A, 0);
+  r.write(0x4200, nmi ? 0x80 : 0x20);
+  // Start the NOP `offset` clocks before the edge.
+  const int64_t from = edge - offset;
+  if (from >= 0) r.run_to(line, static_cast<int>(from));
+  else r.run_to(line - 1, timing::kLineClocks + static_cast<int>(from));
+  r.step();
+  for (int n = 0; n < 10; n++) {
+    r.step();
+    if (r.in_handler()) return n;
+  }
+  return -1;
+}
+auto irq_early() -> double { return instructions_before(false, 4); }
+auto irq_late() -> double { return instructions_before(false, 11); }
+auto nmi_early() -> double { return instructions_before(true, 4); }
+auto nmi_late() -> double { return instructions_before(true, 11); }
 
 // Master clocks per CPU access at `address`, with MEMSEL ($420D) set to `memsel`.
 auto access(Address address, Byte memsel) -> double {
@@ -271,7 +405,7 @@ struct Spec {
 };
 
 // clang-format off
-const std::array<Spec, 31> kSpecs = {{
+const std::array<Spec, 41> kSpecs = {{
     {{"line_clocks", "Line length", "clocks", 1364, 1364, 0, Source::Wiki, {}}, normal_line},
     {{"short_line_clocks", "Short line (V=240, field 1, interlace off)", "clocks", 1360, 1360, 0, Source::Wiki, {}}, short_line},
     {{"frame_clocks_0", "Frame, field 0 (262 lines)", "clocks", 357368, 357368, 0, Source::Derived, {}}, [] { return frame_clocks(0); }},
@@ -282,12 +416,28 @@ const std::array<Spec, 31> kSpecs = {{
       "averaged over whole instructions: a frame ends after the instruction that crosses it"}, cpu_frame_rate},
     {{"game_time_hour_ns", "Game time of 216000 frames (1 h)", "ns", kHourExactNs, kHourExactNs, 1, Source::Derived, {}}, game_time_hour},
     {{"vblank_line", "V-blank starts", "line", 225, 225, 0, Source::Fullsnes, {}}, vblank_line},
-    {{"nmi_clock", "NMI flag set, clocks into line 225", "clocks", 2, 2, 2, Source::Anomie,
-      "set at the line's start (H=0); hardware sets it at H=0.5 dot"}, nmi_clock},
-    {{"virq_clock", "V-IRQ, clocks into line VTIME", "clocks", 10, 10, 9, Source::Anomie,
-      "fires at H=0; hardware fires ~2.5 dots in (1374 clocks after dot 0 of the line before)"}, virq_clock},
-    {{"hirq_clock", "H-IRQ, clocks after HTIME*4", "clocks", 14, 14, 13, Source::Anomie,
-      "fires at HTIME*4; hardware fires ~3.5 dots later (14 + HTIME*4), long dots aside"}, hirq_clock},
+    {{"nmi_clock", "NMI flag set, clocks into line 225", "clocks", 2, 2, 0, Source::Anomie, {}}, nmi_clock},
+    {{"virq_clock", "V-IRQ, clocks into line VTIME", "clocks", 10, 10, 0, Source::Anomie, {}}, virq_clock},
+    {{"virq_after_short_clock", "V-IRQ after the short line, clocks into line 241", "clocks", 14, 14, 0, Source::Derived, {}},
+     virq_after_short_line},
+    {{"hirq_clock", "H-IRQ, clocks after HTIME*4", "clocks", 14, 14, 0, Source::Anomie, {}}, hirq_clock},
+    {{"hirq_long_dots_clock", "H-IRQ past the long dots, clocks after HTIME*4", "clocks", 18, 18, 0, Source::Derived, {}},
+     hirq_long_dots},
+    {{"irq_sequence_clocks", "IRQ/NMI sequence, native mode", "clocks", 62, 62, 0, Source::Derived, {}},
+     irq_sequence_native},
+    {{"irq_sequence_emu_clocks", "IRQ/NMI sequence, emulation mode", "clocks", 54, 54, 0, Source::Derived, {}},
+     irq_sequence_emulation},
+    {{"wai_exit_clocks", "WAI: interrupt line low to the IRQ sequence", "clocks", 12, 12, 0, Source::Anomie, {}}, wai_exit},
+    {{"cli_irq_instructions", "IRQ after CLI: instructions before it", "instr", 1, 1, 0, Source::Anomie, {}}, cli_latency},
+    {{"irq_early_instructions", "IRQ before an instruction's last cycle: delay", "instr", 0, 0, 0,
+      Source::Anomie, {}}, irq_early},
+    {{"irq_late_instructions", "IRQ in an instruction's last cycle: delay", "instr", 1, 1, 0,
+      Source::Anomie, {}}, irq_late},
+    {{"nmi_early_instructions", "NMI before an instruction's last cycle: delay", "instr", 0, 0, 1,
+      Source::Anomie, "held one instruction every time, so a $4210 poll always sees V-blank (Final Fantasy III's song wait)"},
+     nmi_early},
+    {{"nmi_late_instructions", "NMI in an instruction's last cycle: delay", "instr", 1, 1, 0,
+      Source::Anomie, {}}, nmi_late},
     {{"autojoy_start", "Auto-joypad read starts, clocks into line 225", "clocks", 130, 382, 0, Source::Anomie,
       "fixed at the earliest point; hardware moves within dots 32.5-95.5 from frame to frame"}, autojoy_start},
     {{"autojoy_clocks", "Auto-joypad read length", "clocks", 4224, 4224, 0, Source::Anomie,

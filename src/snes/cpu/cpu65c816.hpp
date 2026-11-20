@@ -33,6 +33,8 @@ public:
 
   auto serialize(Archive& ar) -> void {
     ar(a, x, y, sp, d, pc, p, dbr, pbr, emulation, halted, wait_for_interrupt, full_stack, extra_cycles);
+    if (ar.at_least(6)) ar(irq_masked);
+    else if (ar.loading()) irq_masked = flag(I);
   }
 
   // Instruction set, addressing modes and the opcode table entry (public so the table can name them).
@@ -96,6 +98,9 @@ private:
   bool wait_for_interrupt = false;
   bool full_stack = false;  // current instruction uses the 16-bit stack pointer in emulation mode
   int extra_cycles = 0;
+  // The I flag the IRQ check sees. CLI, SEI, PLP, REP and SEP change I in their final cycle,
+  // after the check, so it takes effect one instruction later (Anomie).
+  bool irq_masked = true;
 
   enum Flags : Byte { C = 0x01, Z = 0x02, I = 0x04, D = 0x08, X = 0x10, M = 0x20, V = 0x40, N = 0x80 };
 
@@ -133,6 +138,7 @@ private:
   auto branch(bool taken, EA target) -> void;
   auto block_move(int direction) -> void;
   auto interrupt(Word native_vector, Word emulation_vector, bool software) -> void;
+  auto hardware_interrupt(Word native_vector, Word emulation_vector) -> int;
   auto cycles_for(const Opcode& entry) const -> int;
 };
 

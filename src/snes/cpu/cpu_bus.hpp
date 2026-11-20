@@ -15,6 +15,9 @@ public:
   virtual auto poll_nmi() -> bool = 0;
   // Level-sensitive IRQ line.
   virtual auto irq_pending() const -> bool = 0;
+  // WAI is ending on an interrupt. Returns the CPU cycles that takes; a bus that times the exit
+  // itself (the S-CPU's, from the moment the line went low) charges it and returns 0.
+  virtual auto end_wait() -> int { return 0; }
   // Interrupt and reset vectors (bank 0). The SA-1 replaces them with its CRV/CNV/CIV
   // registers; everyone else reads the two bytes from memory.
   virtual auto read_vector(Word address) -> Word {

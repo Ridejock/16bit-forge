@@ -910,7 +910,7 @@ static int test_nmi_taken() {
     h.bus.write(0x7E0200, 0x00);
     h.run_cycles(2);
 
-    ppu.step(225 * CYCLES_PER_SCANLINE);
+    ppu.step(225 * CYCLES_PER_SCANLINE + 2);  // the NMI flag rises at H=0.5 (2 clocks), V-blank at H=0
 
     if ((h.bus.read(0x804212) & 0x80) == 0) {
         printf("HVBJOY bit 7 clear inside vblank");
@@ -1655,6 +1655,7 @@ static int test_nmi_vectors_and_b_flag() {
         if (native) h.cpu.step();
         h.bus.write(0x004200, 0x80);
         h.bus.on_vblank_start();
+        h.bus.on_vblank_nmi();
         if (!run_to_stp(h)) return 1;
         auto r = h.cpu.registers();
         if (expect_eq(r.pc, native ? 0x9601u : 0x9501u, native ? "native NMI vector" : "emulation NMI vector")) return 1;

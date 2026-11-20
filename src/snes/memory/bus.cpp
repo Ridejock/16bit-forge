@@ -6,6 +6,8 @@
 #include "snes/memory/cartridge.hpp"
 #include "snes/ppu/ppu.hpp"
 #include "snes/apu/apu.hpp"
+#include "snes/cpu/cpu65c816.hpp"
+#include "snes/timing.hpp"
 #include "utils/logging.hpp"
 #include <algorithm>
 #include <cstdio>
@@ -45,7 +47,8 @@ Bus::~Bus() = default;
 auto Bus::read(Address address) -> Byte {
   mar = address;
   if (!dma_active) {
-    pending_clocks += static_cast<uint64_t>(access_clocks(address));
+    last_access_clocks = access_clocks(address);
+    pending_clocks += static_cast<uint64_t>(last_access_clocks);
     cpu_accesses++;
   }
 
@@ -104,7 +107,8 @@ auto Bus::write(Address address, Byte value) -> void {
   const Word offset = address & 0xFFFF;
   mar = address;
   if (!dma_active) {
-    pending_clocks += static_cast<uint64_t>(access_clocks(address));
+    last_access_clocks = access_clocks(address);
+    pending_clocks += static_cast<uint64_t>(last_access_clocks);
     cpu_accesses++;
   }
 
@@ -259,6 +263,9 @@ auto Bus::reset() -> void {
   dma_active = false;
   in_cpu_step = false;
   nmi_fresh = nmi_blocked = false;
+  bus_clock = nmi_edge = irq_edge = 0;
+  last_access_clocks = last_cycle_clocks = 0;
+  irq_late = false;
   rdnmi_read_early = false;
   timeup_read_early = false;
   input_read_ = false;
@@ -278,9 +285,24 @@ auto Bus::access_clocks(Address address) const -> int {
   return fast_rom ? kFastClocks : kSlowClocks;
 }
 
+auto Bus::begin_cpu_step() -> void {
+  cpu_accesses = 0;
+  in_cpu_step = true;
+  rdnmi_read_early = timeup_read_early = false;  // the PPU has run past the last instruction
+  const bool waiting = cpu && cpu->waiting();
+  nmi_blocked = nmi_fresh && !waiting;  // a V-blank NMI raised during the last instruction waits one more
+  nmi_fresh = false;
+  // The CPU checks for interrupts just before an instruction's final cycle (Anomie), so a timer
+  // IRQ that rose in that cycle is seen only after the next instruction.
+  irq_late = !waiting && (timeup & 0x80) && irq_edge + static_cast<uint64_t>(last_cycle_clocks) > bus_clock;
+}
+
 auto Bus::end_cpu_step(int cpu_cycles) -> uint64_t {
   in_cpu_step = false;
   nmi_blocked = false;
+  irq_late = false;
+  // Internal cycles are counted at the end of the instruction, so one is its final cycle.
+  last_cycle_clocks = cpu_cycles > cpu_accesses ? kInternalCycleClocks : (cpu_cycles > 0 ? last_access_clocks : 0);
   pending_clocks += static_cast<uint64_t>(std::max(0, cpu_cycles - cpu_accesses) * kInternalCycleClocks);
   cpu_accesses = 0;
   const uint64_t clocks = pending_clocks + refresh_stall(pending_clocks);
@@ -305,24 +327,58 @@ auto dram_refresh_stall(int hclock, uint64_t clocks) -> uint64_t {
   return stall;
 }
 
-auto Bus::timer_hits(int v, int from, int to) const -> bool {
-  // NMITIMEN bit 4 = H-IRQ, bit 5 = V-IRQ. H alone fires every line at HTIME, V alone at the
-  // start of line VTIME, both at HTIME on line VTIME.
+// Where the H/V timer sets TIMEUP in line `v` (`next`: of the next frame), in clocks from its
+// dot 0, or -1. NMITIMEN bit 4 = H-IRQ, bit 5 = V-IRQ: H alone fires every line, V alone on line
+// VTIME, both on line VTIME at HTIME. Anomie: V-IRQ (or HTIME 0) 1374 clocks after dot 0 of the
+// line before; else 14 + HTIME*4 after dot 0 of the line, later past the long dots. An HTIME near
+// the end of the line (337-339) lands early in the next line.
+auto Bus::timer_point(int v, bool next) const -> int {
   const int mode = (nmitimen >> 4) & 0x03;
-  if (mode == 0) return false;
-  if ((mode & 0x01) && htime > kLastDot) return false;  // the H counter never gets there
-  if ((mode & 0x02) && v != vtime) return false;
-  const int at = (mode & 0x01) ? htime * 4 : 0;
-  return at >= from && at < to;
+  if (mode == 0 || !ppu) return -1;
+  const bool h_irq = (mode & 0x01) != 0;
+  const bool v_irq = (mode & 0x02) != 0;
+  if (h_irq && htime > kLastDot) return -1;  // the H counter never gets there
+  const int length = ppu->line_clocks(v, next);
+  const int prev = v > 0 ? v - 1 : ppu->frame_lines() - 1;  // the last line is never the short one
+  const int prev_length = v > 0 ? ppu->line_clocks(v - 1, next) : timing::kLineClocks;
+  if (!h_irq || htime == 0) return (!v_irq || v == vtime) ? timing::kVIrqClock - prev_length : -1;
+  const auto h_point = [this](int line_length) {
+    int at = timing::kHIrqClock + htime * 4;
+    if (line_length == timing::kLineClocks) {  // the short line has no long dots
+      for (const int dot : {timing::kLongDot1, timing::kLongDot2}) {
+        if (htime + 3 > dot) at += timing::kLongDotExtra;
+      }
+    }
+    return at;
+  };
+  if (!v_irq || v == vtime) {
+    if (const int at = h_point(length); at < length) return at;
+  }
+  if (!v_irq || prev == vtime) {
+    if (const int at = h_point(prev_length) - prev_length; at >= 0) return at;
+  }
+  return -1;
+}
+
+auto Bus::timer_hits(int v, int from, int to, bool next) const -> bool {
+  const int at = timer_point(v, next);
+  return at > from && at <= to;
 }
 
 auto Bus::on_clock(int v, int from, int to) -> void {
   scope_light(v, from, to);
-  if (!timer_hits(v, from, to)) return;
+  const uint64_t start = bus_clock;
+  bus_clock += static_cast<uint64_t>(to - from);
+  if (ppu && v == ppu->vblank_line() && from < timing::kNmiClock && timing::kNmiClock <= to) {
+    raise_nmi(start + static_cast<uint64_t>(timing::kNmiClock - from));
+  }
+  const int at = timer_point(v, false);
+  if (at <= from || at > to) return;
   if (timeup_read_early) {
     timeup_read_early = false;  // this instruction's $4211 read already took it
     return;
   }
+  if (!(timeup & 0x80)) irq_edge = start + static_cast<uint64_t>(at - from);
   timeup |= 0x80;
 }
 
@@ -335,7 +391,7 @@ auto Bus::timer_fires_within(uint64_t clocks) const -> bool {
   while (clocks > 0) {
     const int length = ppu->line_clocks(v, next);
     const auto run = static_cast<int>(std::min<uint64_t>(clocks, static_cast<uint64_t>(length - c)));
-    if (timer_hits(v, c, c + run)) return true;
+    if (timer_hits(v, c, c + run, next)) return true;
     c += run;
     clocks -= static_cast<uint64_t>(run);
     if (c == length) {
@@ -385,8 +441,6 @@ auto Bus::scope_light(int v, int from, int to) -> void {
 
 auto Bus::on_vblank_start() -> void {
   vblank_active = true;
-  if (!rdnmi_read_early) rdnmi |= 0x80;  // else a $4210 read in this instruction already took it
-  rdnmi_read_early = false;
   if (nmitimen & 0x01) {
     // Auto-joypad read strobes both ports and clocks 16 bits out of each: D0 into $4218/$421A,
     // D1 into $421C/$421E. The reports are left read out, so a manual $4016/$4017 read
@@ -398,11 +452,30 @@ auto Bus::on_vblank_start() -> void {
     joy2 = p2[0];
     joy4 = p2[1];
   }
+}
+
+auto Bus::on_vblank_nmi() -> void { raise_nmi(bus_clock); }
+
+auto Bus::raise_nmi(uint64_t at) -> void {
+  if (!rdnmi_read_early) rdnmi |= 0x80;  // else a $4210 read in this instruction already took it
+  rdnmi_read_early = false;
   // NMI fires on this edge; enabling it later fires only while RDNMI is unread (see $4200).
   if (nmitimen & 0x80) {
     nmi_pending = true;
     nmi_fresh = true;
+    nmi_edge = at;
   }
+}
+
+auto Bus::end_wait() -> int {
+  uint64_t edge = bus_clock;  // a cartridge IRQ: from now
+  if (nmi_pending) edge = nmi_edge;
+  else if (timeup & 0x80) edge = irq_edge;
+  const uint64_t since = bus_clock - std::min(edge, bus_clock);
+  const auto exit = static_cast<uint64_t>(timing::kWaiExitClocks);
+  pending_clocks += since < exit ? exit - since : 0;
+  nmi_blocked = irq_late = false;
+  return 0;
 }
 
 auto Bus::on_vblank_end() -> void {
@@ -466,7 +539,13 @@ auto Bus::serialize(Archive& ar) -> void {
     }
   }
   ar(pending_clocks, cpu_accesses, dma_active, mar);
-  if (ar.loading()) in_cpu_step = rdnmi_read_early = timeup_read_early = nmi_fresh = nmi_blocked = false;
+  if (ar.loading()) in_cpu_step = rdnmi_read_early = timeup_read_early = nmi_fresh = nmi_blocked = irq_late = false;
+  if (ar.at_least(6)) {
+    ar(bus_clock, nmi_edge, irq_edge, last_cycle_clocks, nmi_fresh);
+  } else if (ar.loading()) {  // version 5: no edges, so nothing is held or owed
+    bus_clock = nmi_edge = irq_edge = 0;
+    last_cycle_clocks = 0;
+  }
 }
 
 auto Bus::read_cpu_io(Word offset) -> Byte {
@@ -479,7 +558,11 @@ auto Bus::read_cpu_io(Word offset) -> Byte {
       // Games poll $4210 with NMI on and an NMI handler that also reads it (Final Fantasy III's
       // "play song" event: LDA $4210 / BPL at $C0:B7A0): only these reads can ever see the flag.
       if (const uint64_t ahead = clocks_ahead(); ahead > 0 && ppu) {
-        if (ppu->clocks_until_line(ppu->vblank_line()) <= ahead) {
+        const int vb = ppu->vblank_line();
+        const uint64_t nmi_at = (ppu->vcounter() == vb && ppu->hclock() < timing::kNmiClock)
+                                    ? static_cast<uint64_t>(timing::kNmiClock - ppu->hclock())
+                                    : ppu->clocks_until_line(vb) + timing::kNmiClock;
+        if (nmi_at <= ahead) {
           flag = 0x80;
           rdnmi_read_early = true;
         } else if (ppu->clocks_until_line(0) <= ahead) {
@@ -528,7 +611,10 @@ auto Bus::write_cpu_io(Word offset, Byte value) -> void {
   switch (offset) {
     case 0x4200:
       // Turning NMI on while the V-blank flag is still unread fires it straight away.
-      if ((value & 0x80) && !(nmitimen & 0x80) && (rdnmi & 0x80)) nmi_pending = true;
+      if ((value & 0x80) && !(nmitimen & 0x80) && (rdnmi & 0x80)) {
+        nmi_pending = true;
+        nmi_edge = bus_clock + pending_clocks;
+      }
       if ((value & 0x30) == 0) timeup &= 0x7F;  // IRQs off: drop the pending one
       nmitimen = value;
       break;

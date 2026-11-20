@@ -24,7 +24,8 @@ namespace savestate {
 
 // The magic predates the 16bit Forge name and stays as is, so existing .sst files keep loading.
 inline constexpr std::array<char, 8> kMagic = {'S', 'N', 'E', 'S', 'S', 'S', 'T', '\0'};
-inline constexpr uint32_t kVersion = 5;  // 2: cartridge coprocessor state, 3: Cx4, 4: APU port timing, 5: controller devices
+inline constexpr uint32_t kVersion = 6;  // 2: cartridge coprocessor state, 3: Cx4, 4: APU port timing, 5: controller devices,
+                                         // 6: interrupt edge timing
 inline constexpr uint32_t kMinVersion = 4;  // the oldest file version that still loads
 
 struct Info {

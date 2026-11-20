@@ -144,6 +144,8 @@ constexpr Vectors kBrk{0xFFE6, 0xFFFE};
 constexpr Vectors kNmi{0xFFEA, 0xFFFA};
 constexpr Vectors kIrq{0xFFEE, 0xFFFE};
 constexpr Word kResetVector = 0xFFFC;
+// IRQ/NMI: 8 cycles, 7 in emulation mode (no PBR push). The first is an opcode fetch from PB:PC,
+// not an internal cycle as the datasheet says (Anomie; fullsnes counts it as internal).
 constexpr int kInterruptCycles = 8;
 
 constexpr Address kBankMask = 0x00FFFF;
@@ -164,6 +166,7 @@ auto CPU65c816::reset() -> void {
   emulation = true;
   halted = false;
   wait_for_interrupt = false;
+  irq_masked = true;
   p = M | X | I;
   a = x = y = d = 0;
   dbr = pbr = 0;
@@ -176,6 +179,7 @@ auto CPU65c816::reset_signal() -> void {
   emulation = true;
   halted = false;
   wait_for_interrupt = false;
+  irq_masked = true;
   p = static_cast<Byte>((p | M | X | I) & ~D);
   x &= 0x00FF;
   y &= 0x00FF;
@@ -193,6 +197,7 @@ auto CPU65c816::set_registers(const Registers& r) -> void {
   a = r.a; x = r.x; y = r.y; sp = r.sp; d = r.d; pc = r.pc;
   dbr = r.dbr; pbr = r.pbr; emulation = r.emulation;
   set_p(r.p);
+  irq_masked = flag(I);
   if (emulation) sp = static_cast<Word>(0x0100 | (sp & 0xFF));
 }
 
@@ -606,21 +611,26 @@ auto CPU65c816::cycles_for(const Opcode& entry) const -> int {
   return cycles;
 }
 
+auto CPU65c816::hardware_interrupt(Word native_vector, Word emulation_vector) -> int {
+  bus.read(bank_addr(pbr, pc));  // the opcode fetch it replaces
+  interrupt(native_vector, emulation_vector, false);
+  irq_masked = true;
+  return emulation ? kInterruptCycles - 1 : kInterruptCycles;
+}
+
 auto CPU65c816::step() -> int {
   if (halted) return 1;
 
-  if (bus.poll_nmi()) {
-    interrupt(kNmi.native, kNmi.emulation, false);
-    return kInterruptCycles;
+  const bool nmi = bus.poll_nmi();
+  const bool irq = bus.irq_pending();
+  int woke = 0;  // cycles spent leaving WAI
+  if (wait_for_interrupt) {
+    if (!nmi && !irq) return 1;
+    wait_for_interrupt = false;  // a masked IRQ wakes it too, and it carries on with the next opcode
+    woke = bus.end_wait();
   }
-  if (bus.irq_pending()) {
-    if (!flag(I)) {
-      interrupt(kIrq.native, kIrq.emulation, false);
-      return kInterruptCycles;
-    }
-    wait_for_interrupt = false;  // WAI wakes on a masked IRQ and carries on with the next opcode
-  }
-  if (wait_for_interrupt) return 1;
+  if (nmi) return woke + hardware_interrupt(kNmi.native, kNmi.emulation);
+  if (irq && !irq_masked) return woke + hardware_interrupt(kIrq.native, kIrq.emulation);
 
   CPU_TRACE("%02X:%04X  A:%04X X:%04X Y:%04X S:%04X D:%04X DB:%02X P:%02X%s", pbr, pc, a, x, y, sp, d, dbr, p,
             emulation ? " E" : "");
@@ -629,12 +639,15 @@ auto CPU65c816::step() -> int {
   const int cycles = cycles_for(entry);
   full_stack = uses_full_stack(entry.op, entry.mode);
   const EA ea = effective_address(entry.mode);
+  const bool i_before = flag(I);
   execute(entry.op, entry.mode, ea);
   if (full_stack) {
     full_stack = false;
     if (emulation) sp = static_cast<Word>(0x0100 | (sp & 0xFF));
   }
-  return cycles + extra_cycles;
+  const bool late_i = entry.op == CLI || entry.op == SEI || entry.op == PLP || entry.op == REP || entry.op == SEP;
+  irq_masked = late_i ? i_before : flag(I);
+  return woke + cycles + extra_cycles;
 }
 
 // ===== Debug =====

@@ -800,15 +800,15 @@ auto test_mid_line_write() -> void {
 
 auto test_h_irq() -> void {
     Rig r;
-    r.reg16(0x4207, 100);             // HTIME = dot 100 = clock 400
+    r.reg16(0x4207, 100);             // HTIME = dot 100: fires at H=103.5, 14 + 400 clocks (Anomie)
     r.reg(0x4200, 0x10);
     r.step(5u * kLine + 300);
     check(r.bus.irq_pending(), "fired on the earlier lines");
     r.read(0x4211);
-    r.step(100);
-    check(!r.bus.irq_pending(), "not before HTIME");
+    r.step(113);
+    check(!r.bus.irq_pending(), "not before HTIME + 3.5 dots");
     r.step(1);
-    check(r.bus.irq_pending(), "fires at HTIME");
+    check(r.bus.irq_pending(), "fires at HTIME + 3.5 dots");
     check_eq(r.read(0x4211), 0x80, "TIMEUP set");
     check_eq(r.read(0x4211), 0x00, "TIMEUP cleared by reading");
     check(!r.bus.irq_pending(), "line released");
@@ -816,26 +816,37 @@ auto test_h_irq() -> void {
     check(r.bus.irq_pending(), "again next line");
     r.reg(0x4200, 0x00);
     check(!r.bus.irq_pending(), "disabling IRQs drops it");
+
+    // HTIME 339: 14 + 1356 + 4 (two long dots) = 1374 clocks, 10 into the next line.
+    Rig end;
+    end.reg16(0x4207, 339);
+    end.reg(0x4200, 0x10);
+    end.step(6u * kLine);
+    end.read(0x4211);
+    end.step(9);
+    check(!end.bus.irq_pending(), "HTIME 339: not at the end of the line");
+    end.step(1);
+    check(end.bus.irq_pending(), "HTIME 339: 10 clocks into the next line");
 }
 
 auto test_v_and_hv_irq() -> void {
     Rig r;
     r.reg16(0x4209, 10);
     r.reg(0x4200, 0x20);              // V-IRQ: start of line 10
-    r.step(10u * kLine);
-    check(!r.bus.irq_pending(), "not before line 10");
+    r.step(10u * kLine + 9);
+    check(!r.bus.irq_pending(), "not before line 10, H=2.5");
     r.step(1);
-    check(r.bus.irq_pending(), "V-IRQ at line 10, H=0");
+    check(r.bus.irq_pending(), "V-IRQ at line 10, 1374 clocks after line 9 starts");
     check_eq(r.ppu.vcounter(), 10u, "on line 10");
 
     Rig hv;
     hv.reg16(0x4209, 20);
     hv.reg16(0x4207, 200);
     hv.reg(0x4200, 0x30);             // HV: line 20 at dot 200
-    hv.step(20u * kLine + 799);
-    check(!hv.bus.irq_pending(), "not before dot 200");
-    hv.step(2);
-    check(hv.bus.irq_pending(), "HV-IRQ at line 20 dot 200");
+    hv.step(20u * kLine + 813);
+    check(!hv.bus.irq_pending(), "not before dot 203.5");
+    hv.step(1);
+    check(hv.bus.irq_pending(), "HV-IRQ at line 20 dot 203.5");
     hv.read(0x4211);
     hv.step(kLine);
     check(!hv.bus.irq_pending(), "only on VTIME");

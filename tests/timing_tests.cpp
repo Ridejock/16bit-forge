@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Timing: the core against documented NTSC hardware timing (debug/timing_check.hpp): line and
-// frame lengths with the short line, interlace, the frame rate, NMI, IRQ, auto-joypad, refresh,
-// DMA and HDMA; the PPU's look-ahead (clocks_until_line) against stepping through the short
+// frame lengths with the short line, interlace, the frame rate, NMI and IRQ (trigger points, long
+// dots, CPU latency, WAI exit), auto-joypad, refresh, DMA and HDMA; the PPU's look-ahead (clocks_until_line) against stepping through the short
 // line; game time against the exact frame period, whatever the wall clock does; the lag frame
 // counter in the core, the emulator (rewind, reset, movie replay) and the run timer; and the
 // timing report. Headless, on built-in programs.
@@ -61,7 +61,10 @@ auto test_documented() -> void {
                             "frame_rate_cpu", "game_time_hour_ns", "vblank_line", "autojoy_start", "autojoy_clocks", "refresh_clocks",
                             "dma_byte_clocks", "dma_channel_clocks", "hdma_init_direct_clocks", "hdma_init_indirect_clocks",
                             "hdma_line_clocks", "hdma_line_idle_clocks", "master_clock_hz", "cpu_clocks_per_line", "access_wram_clocks",
-                            "access_slowrom_clocks", "access_fastrom_clocks", "access_io_clocks", "access_joyser_clocks"}) {
+                            "access_slowrom_clocks", "access_fastrom_clocks", "access_io_clocks", "access_joyser_clocks",
+                            "nmi_clock", "virq_clock", "virq_after_short_clock", "hirq_clock", "hirq_long_dots_clock",
+                            "irq_sequence_clocks", "irq_sequence_emu_clocks", "wai_exit_clocks", "cli_irq_instructions",
+                            "irq_early_instructions", "irq_late_instructions", "nmi_late_instructions"}) {
         const debug::TimingCheck* c = find(checks, key);
         CHECK(c != nullptr);
         if (c && c->verdict() != debug::Verdict::Exact) {
@@ -69,6 +72,8 @@ auto test_documented() -> void {
             checks_failed++;
         }
     }
+    // The one interrupt gap left: the NMI hold (see memory::Bus::nmi_fresh), one instruction.
+    if (const debug::TimingCheck* c = find(checks, "nmi_early_instructions")) CHECK(c->measured == 1 && c->verdict() == debug::Verdict::Close);
     // The known gaps say why.
     for (const auto& c : checks) {
         if (c.verdict() == debug::Verdict::Close) CHECK(!c.note.empty());
