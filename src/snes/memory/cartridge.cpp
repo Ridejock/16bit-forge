@@ -181,6 +181,14 @@ auto Cartridge::clear_sram_dirty() -> void {
   battery_copy.assign(battery.begin(), battery.end());
 }
 
+auto Cartridge::poke_sram(std::size_t offset, Byte value) -> bool {
+  auto ram = sram_data();
+  if (offset >= ram.size()) return false;
+  if (ram[offset] != value) dirty = true;
+  ram[offset] = value;
+  return true;
+}
+
 // ROM is mirrored to fill whatever the layout addresses.
 auto Cartridge::rom_offset(Address address) const -> std::optional<Address> {
   const Byte bank = static_cast<Byte>(address >> 16);

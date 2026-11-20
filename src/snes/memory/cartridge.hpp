@@ -45,6 +45,8 @@ public:
   auto sram_data() -> std::span<Byte>;
   auto sram_dirty() const -> bool;
   auto clear_sram_dirty() -> void;
+  // A tool poke (a watch freeze or a hand edit). Sets the dirty flag when the byte changes.
+  auto poke_sram(std::size_t offset, Byte value) -> bool;
 
   // ---- Enhancement chips ----------------------------------------------------------------------
   // Folder holding user-supplied coprocessor firmware (dsp1b.rom, st010.rom, ...).

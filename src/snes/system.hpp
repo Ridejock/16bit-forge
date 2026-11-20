@@ -11,6 +11,9 @@
 #include "snes/apu/apu.hpp"
 #include "snes/cheats.hpp"
 #include "snes/msu1.hpp"
+#include "snes/ramwatch.hpp"
+
+#include <optional>
 
 namespace bitforge {
 
@@ -73,8 +76,29 @@ public:
     // of samples at the same rate, for the frontend to mix in. Empty without an MSU-1.
     auto msu1() -> Msu1* { return msu1_.get(); }
     // Cheats (configuration, not machine state): the enabled entries apply from the next read.
-    auto set_cheats(std::span<const CheatEntry> entries) -> void { cheats_.set(entries); }
+    // An enabled entry marks this run as having used cheats.
+    auto set_cheats(std::span<const CheatEntry> entries) -> void {
+        cheats_.set(entries);
+        for (const CheatEntry& entry : entries) {
+            if (entry.enabled) {
+                watches_.note_cheat();
+                break;
+            }
+        }
+    }
     auto cheats() const -> const CheatEngine& { return cheats_; }
+
+    // Watches, search, and the race-mode marks. Not saved in a state. Freezes end when this
+    // System is destroyed (the game is closed). reset() keeps them.
+    auto watches() -> RamWatch& { return watches_; }
+    auto watches() const -> const RamWatch& { return watches_; }
+    auto read_memory(WatchDomain domain, uint32_t offset) -> std::optional<uint8_t>;
+    auto write_memory(WatchDomain domain, uint32_t offset, uint8_t value) -> bool;
+    auto copy_memory(WatchDomain domain) -> std::vector<uint8_t>;
+    // Boots a ROM image built in memory. For tests. Clears watches, then resets the machine.
+    auto load_test_rom(const std::vector<uint8_t>& data, memory::MapMode mode = memory::MapMode::LoROM,
+                       std::size_t sram_bytes = 0) -> void;
+
     auto msu1_samples() const -> const std::vector<int16_t>& { return msu1_samples_; }
 
 private:
@@ -91,6 +115,9 @@ private:
     bool vram_dumped = false;
 
     auto serialize(Archive& ar) -> void;
+    auto service_watches() -> void;  // freeze writes, then one sample, at the start of the frame
+
+    RamWatch watches_;
 };
 
 } // namespace bitforge

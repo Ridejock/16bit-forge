@@ -10,8 +10,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <ctime>
 #include <filesystem>
+#include <iterator>
 
 namespace fs = std::filesystem;
 
@@ -438,6 +440,8 @@ auto App::handle_game_event(const SDL_Event& event) -> void {
             game_.toggle_fullscreen();
         } else if (event.key.key == SDLK_ESCAPE && game_.is_fullscreen()) {
             game_.toggle_fullscreen();
+        } else if (event.key.key == SDLK_M && (event.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) == 0) {
+            toggle_ram_panel();
         } else if (!state_hotkey(event.key.key, event.key.mod)) {
             input_.on_key(event.key.key, true);
         }
@@ -529,7 +533,7 @@ auto App::draw_ui() -> void {
     const float status_h = ImGui::GetFrameHeightWithSpacing();
     const float strip_h = status_.loaded ? timeline_block_height() : 0.f;
     const float body_h = std::max(1.f, ImGui::GetContentRegionAvail().y - status_h - strip_h);
-    const bool panels = settings_.show_log || show_controls_ || show_audio_ || show_speed_ || show_cheats_;
+    const bool panels = settings_.show_log || show_controls_ || show_audio_ || show_speed_ || show_cheats_ || show_ramwatch_;
     const float library_h = panels ? body_h * kLibraryShare : body_h;
 
     ImGui::BeginChild("library", ImVec2(0.f, library_h), ImGuiChildFlags_Borders);
@@ -557,6 +561,15 @@ auto App::draw_ui() -> void {
             }
             if (show_cheats_ && ImGui::BeginTabItem("Cheats", &show_cheats_)) {
                 draw_cheats_panel();
+                ImGui::EndTabItem();
+            }
+            ImGuiTabItemFlags ram_flags = 0;
+            if (ramwatch_select_) {
+                ram_flags = ImGuiTabItemFlags_SetSelected;
+                ramwatch_select_ = false;
+            }
+            if (show_ramwatch_ && ImGui::BeginTabItem("RAM search", &show_ramwatch_, ram_flags)) {
+                draw_ram_panel();
                 ImGui::EndTabItem();
             }
             ImGui::EndTabBar();
@@ -660,12 +673,20 @@ auto App::draw_menu_bar() -> void {
 
     if (ImGui::BeginMenu("Debug")) {
         if (ImGui::MenuItem("Log", nullptr, &settings_.show_log)) save_settings();
+        const bool ram_was_open = show_ramwatch_;
+        if (ImGui::MenuItem("Memory watch / RAM search", "M", &show_ramwatch_) && show_ramwatch_ && !ram_was_open) {
+            ramwatch_select_ = true;
+        }
         ImGui::EndMenu();
     }
     ImGui::EndMenuBar();
 
     // Space toggles pause while the main window has focus and no text field is active.
-    if (loaded && !ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Space, false)) toggle_pause();
+    // M opens the memory watch. A text field keeps the key.
+    if (!ImGui::GetIO().WantTextInput) {
+        if (loaded && ImGui::IsKeyPressed(ImGuiKey_Space, false)) toggle_pause();
+        if (ImGui::IsKeyPressed(ImGuiKey_M, false)) toggle_ram_panel();
+    }
 }
 
 auto App::toggle_pause() -> void {
@@ -1146,6 +1167,397 @@ auto App::draw_speed_panel() -> void {
     }
     ImGui::TextDisabled("Audio plays sped up (higher pitch) while fast-forwarding. Hotkeys are under Controls.");
     if (changed) apply_speed_settings();
+}
+
+auto App::toggle_ram_panel() -> void {
+    show_ramwatch_ = !show_ramwatch_;
+    if (show_ramwatch_) ramwatch_select_ = true;
+}
+
+auto App::save_ram_watches() -> void {
+    const bool ok = emu_thread_.call([](EmuThread::Core& c) { return c.emu.loaded() && c.emu.save_watches(); });
+    if (!ok) {
+        ram_message_ = "Could not save watches.";
+        ram_message_error_ = true;
+    }
+}
+
+auto App::draw_ram_panel() -> void {
+    if (!status_.loaded) {
+        ImGui::TextDisabled("Load a game to search its memory and edit watches.");
+        return;
+    }
+    if (ram_rom_ != status_.rom_path) {
+        ram_edits_.clear();
+        ram_message_.clear();
+        ram_message_error_ = false;
+        ram_domain_ = 0;
+        ram_rom_ = status_.rom_path;
+    }
+
+    constexpr struct {
+        bitforge::SearchCompare compare;
+        const char* label;
+    } kCompares[] = {
+        {bitforge::SearchCompare::Equal, "equal to"},
+        {bitforge::SearchCompare::NotEqual, "not equal to"},
+        {bitforge::SearchCompare::Less, "less than"},
+        {bitforge::SearchCompare::Greater, "greater than"},
+        {bitforge::SearchCompare::Changed, "changed"},
+        {bitforge::SearchCompare::Unchanged, "unchanged"},
+        {bitforge::SearchCompare::Increased, "increased"},
+        {bitforge::SearchCompare::Decreased, "decreased"},
+    };
+    if (ram_compare_ < 0 || ram_compare_ >= static_cast<int>(std::size(kCompares))) ram_compare_ = 0;
+
+    const bitforge::frontend::Emulator::MemorySearchView view =
+        emu_thread_.call([](EmuThread::Core& c) { return c.emu.memory_view(); });
+    if (view.sram_bytes == 0 && ram_domain_ != 0) ram_domain_ = 0;
+
+    ImGui::SeparatorText("RAM search");
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 8.f);
+    if (ImGui::BeginCombo("##domain", ram_domain_ == 0 ? "WRAM" : "SRAM")) {
+        if (ImGui::Selectable("WRAM", ram_domain_ == 0)) ram_domain_ = 0;
+        ImGui::BeginDisabled(view.sram_bytes == 0);
+        if (ImGui::Selectable("SRAM", ram_domain_ == 1)) ram_domain_ = 1;
+        ImGui::EndDisabled();
+        if (view.sram_bytes == 0 && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::SetTooltip("This game has no SRAM.");
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 10.f);
+    if (ImGui::BeginCombo("##compare", kCompares[ram_compare_].label)) {
+        for (int i = 0; i < static_cast<int>(std::size(kCompares)); ++i) {
+            if (ImGui::Selectable(kCompares[i].label, i == ram_compare_)) ram_compare_ = i;
+        }
+        ImGui::EndCombo();
+    }
+    const bool needs_value = bitforge::compare_needs_value(kCompares[ram_compare_].compare);
+    if (needs_value) {
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 6.f);
+        ImGui::InputInt("##search_value", &ram_value_);
+        ram_value_ = std::clamp(ram_value_, 0, 255);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("New")) {
+        const bitforge::WatchDomain domain = ram_domain_ == 1 ? bitforge::WatchDomain::Sram : bitforge::WatchDomain::Wram;
+        const uint32_t count = emu_thread_.call([domain](EmuThread::Core& c) -> uint32_t {
+            if (!c.emu.loaded()) return 0;
+            const std::vector<uint8_t> bytes = c.emu.region_bytes(domain);
+            if (bytes.empty()) return 0;
+            c.emu.watches().start_search(domain, bytes);
+            return c.emu.watches().candidate_count();
+        });
+        ram_message_error_ = false;
+        ram_message_ = count == 0 ? "Nothing to search." : "Captured. Search narrows this list. Search again after the game changes memory.";
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Search")) {
+        const bitforge::SearchCompare compare = kCompares[ram_compare_].compare;
+        const int typed = std::clamp(ram_value_, 0, 255);
+        const bool ok = emu_thread_.call([compare, typed](EmuThread::Core& c) {
+            if (!c.emu.loaded() || !c.emu.watches().searching()) return false;
+            const std::vector<uint8_t> bytes = c.emu.region_bytes(c.emu.watches().search_domain());
+            const std::optional<uint8_t> value = bitforge::compare_needs_value(compare) ? std::optional<uint8_t>{static_cast<uint8_t>(typed)} : std::nullopt;
+            return c.emu.watches().narrow(bytes, compare, value);
+        });
+        ram_message_error_ = !ok;
+        if (!ok) ram_message_ = "Use New before Search.";
+    }
+    ImGui::SetItemTooltip("Keeps the addresses that match. Run it again to narrow further.");
+
+    if (!view.searching) {
+        ImGui::TextDisabled("New reads memory. Search keeps the addresses that match.");
+    } else if (view.candidates == 0) {
+        ImGui::TextUnformatted("No addresses matched.");
+    } else if (view.hits.empty()) {
+        ImGui::Text("%u addresses in %s. Narrow further to list them.", view.candidates, view.domain == bitforge::WatchDomain::Wram ? "WRAM" : "SRAM");
+    } else {
+        ImGui::Text("%u address%s in %s.", view.candidates, view.candidates == 1 ? "" : "es", view.domain == bitforge::WatchDomain::Wram ? "WRAM" : "SRAM");
+        const float hits_h = std::min(ImGui::GetFrameHeightWithSpacing() * static_cast<float>(view.hits.size() + 1), ImGui::GetFontSize() * 10.f);
+        if (ImGui::BeginTable("hits", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_ScrollY, ImVec2(0.f, hits_h))) {
+            ImGui::TableSetupColumn("Address", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 7.f);
+            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 4.f);
+            ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 5.f);
+            ImGui::TableHeadersRow();
+            for (const auto& hit : view.hits) {
+                ImGui::PushID(static_cast<int>(hit.offset));
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                const std::string address = bitforge::format_address(view.domain, hit.offset);
+                ImGui::TextUnformatted(address.c_str());
+                ImGui::TableNextColumn();
+                ImGui::Text("$%02X", hit.value);
+                ImGui::TableNextColumn();
+                if (ImGui::SmallButton("Watch")) {
+                    const uint32_t offset = hit.offset;
+                    const bitforge::WatchDomain domain = view.domain;
+                    const bool saved = emu_thread_.call([offset, domain, address](EmuThread::Core& c) {
+                        if (!c.emu.loaded()) return false;
+                        for (const bitforge::Watch& watch : c.emu.watches().list()) {
+                            if (watch.domain == domain && watch.offset == offset && watch.size == 1) return true;
+                        }
+                        if (c.emu.watches().add_watch(domain, offset, 1, address) == 0) return false;
+                        return c.emu.save_watches();
+                    });
+                    ram_message_error_ = !saved;
+                    if (!saved) ram_message_ = "Could not add that watch.";
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
+    }
+
+    ImGui::SeparatorText("Watches");
+    std::vector<RamEdit> edits;
+    edits.reserve(view.watches.size());
+    for (const bitforge::Watch& watch : view.watches) {
+        RamEdit edit;
+        edit.id = watch.id;
+        const auto previous = std::find_if(ram_edits_.begin(), ram_edits_.end(), [&](const RamEdit& row) { return row.id == watch.id; });
+        if (previous == ram_edits_.end()) {
+            std::snprintf(edit.label.data(), edit.label.size(), "%s", watch.label.c_str());
+            edit.hold = static_cast<int>(watch.frozen ? watch.freeze_value : watch.value);
+            edit.from = static_cast<int>(watch.condition.from);
+            edit.to = static_cast<int>(watch.condition.to);
+            edit.when = watch.condition.enabled;
+        } else {
+            edit = *previous;
+        }
+        if (watch.condition_met) edit.matched_until = static_cast<float>(ImGui::GetTime()) + 1.5f;
+        edits.push_back(edit);
+    }
+    ram_edits_ = std::move(edits);
+
+    const float footer = ImGui::GetFrameHeightWithSpacing() * 2.4f;
+    if (ImGui::BeginTable("watches", 8,
+                          ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY,
+                          ImVec2(0.f, -footer))) {
+        ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 2.4f);
+        ImGui::TableSetupColumn("Address", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 5.6f);
+        ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 5.2f);
+        ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.f);
+        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 7.f);
+        ImGui::TableSetupColumn("Set", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 14.f);
+        ImGui::TableSetupColumn("When", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 16.f);
+        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.f);
+        ImGui::TableHeadersRow();
+        for (std::size_t index = 0; index < view.watches.size(); ++index) {
+            const bitforge::Watch& watch = view.watches[index];
+            RamEdit& edit = ram_edits_[index];
+            const int max_value = watch.size == 1 ? 255 : watch.size == 2 ? 65535 : 0x7FFFFFFF;
+            ImGui::PushID(static_cast<int>(watch.id));
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::Text("%u", watch.id);
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(bitforge::format_address(watch.domain, watch.offset).c_str());
+            ImGui::TableNextColumn();
+            int size_index = watch.size == 4 ? 2 : watch.size == 2 ? 1 : 0;
+            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 4.5f);
+            if (ImGui::Combo("##size", &size_index, "byte\0word\0long\0")) {
+                const uint8_t size = size_index == 2 ? 4 : size_index == 1 ? 2 : 1;
+                const uint32_t id = watch.id;
+                const bool ok = emu_thread_.call([id, size](EmuThread::Core& c) { return c.emu.set_watch_size(id, size); });
+                ram_message_error_ = !ok;
+                if (!ok) ram_message_ = "That size does not fit.";
+            }
+            ImGui::TableNextColumn();
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            ImGui::InputText("##label", edit.label.data(), edit.label.size());
+            if (ImGui::IsItemDeactivatedAfterEdit()) {
+                const std::string label = edit.label.data();
+                if (label != watch.label) {
+                    const uint32_t id = watch.id;
+                    const bool ok = emu_thread_.call([id, label](EmuThread::Core& c) {
+                        return c.emu.loaded() && c.emu.watches().set_label(id, label) && c.emu.save_watches();
+                    });
+                    ram_message_error_ = !ok;
+                    if (!ok) ram_message_ = "Could not save watches.";
+                }
+            }
+            ImGui::TableNextColumn();
+            char value_text[48];
+            if (watch.size == 1) {
+                std::snprintf(value_text, sizeof(value_text), "$%02X (%u)", watch.value & 0xFF, watch.value & 0xFF);
+            } else if (watch.size == 2) {
+                std::snprintf(value_text, sizeof(value_text), "$%04X (%u)", watch.value & 0xFFFF, watch.value & 0xFFFF);
+            } else {
+                std::snprintf(value_text, sizeof(value_text), "$%08X (%u)", watch.value, watch.value);
+            }
+            ImGui::TextUnformatted(value_text);
+            ImGui::TableNextColumn();
+            if (!edit.hold_touched && !edit.hold_active && !watch.frozen) edit.hold = static_cast<int>(std::min(watch.value, static_cast<uint32_t>(max_value)));
+            if (watch.frozen && !edit.hold_active) edit.hold = static_cast<int>(std::min(watch.freeze_value, static_cast<uint32_t>(max_value)));
+            edit.hold = std::clamp(edit.hold, 0, max_value);
+            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 6.f);
+            ImGui::InputInt("##hold", &edit.hold, 0, 0);
+            edit.hold = std::clamp(edit.hold, 0, max_value);
+            if (ImGui::IsItemDeactivatedAfterEdit()) {
+                edit.hold_touched = true;
+                if (watch.frozen) {
+                    const uint32_t id = watch.id;
+                    const uint32_t hold = static_cast<uint32_t>(edit.hold);
+                    const bool ok = emu_thread_.call([id, hold](EmuThread::Core& c) { return c.emu.freeze_watch(id, true, hold); });
+                    ram_message_error_ = !ok;
+                    if (!ok) ram_message_ = "Could not freeze that value.";
+                }
+            }
+            edit.hold_active = ImGui::IsItemActive();
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Write")) {
+                const uint32_t id = watch.id;
+                const uint32_t hold = static_cast<uint32_t>(edit.hold);
+                edit.hold_touched = true;
+                const bool ok = emu_thread_.call([id, hold](EmuThread::Core& c) { return c.emu.edit_watch(id, hold); });
+                ram_message_error_ = !ok;
+                ram_message_ = ok ? "Wrote it once. The run is marked as hand-edited." : "Could not write that watch.";
+            }
+            ImGui::SameLine();
+            bool frozen = watch.frozen;
+            if (ImGui::Checkbox("Freeze", &frozen)) {
+                const uint32_t id = watch.id;
+                const uint32_t hold = static_cast<uint32_t>(edit.hold);
+                const bool ok = emu_thread_.call([id, frozen, hold](EmuThread::Core& c) { return c.emu.freeze_watch(id, frozen, hold); });
+                ram_message_error_ = !ok;
+                if (!ok) ram_message_ = "Could not freeze that value.";
+            }
+            ImGui::TableNextColumn();
+            if (ImGui::Checkbox("##when", &edit.when)) {
+                const uint32_t id = watch.id;
+                const bitforge::WatchCondition condition{edit.when, static_cast<uint32_t>(std::clamp(edit.from, 0, max_value)),
+                                                         static_cast<uint32_t>(std::clamp(edit.to, 0, max_value))};
+                const bool ok = emu_thread_.call([id, condition](EmuThread::Core& c) {
+                    return c.emu.loaded() && c.emu.watches().set_condition(id, condition) && c.emu.save_watches();
+                });
+                ram_message_error_ = !ok;
+                if (!ok) ram_message_ = "Could not save watches.";
+            }
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 4.5f);
+            ImGui::InputInt("##from", &edit.from, 0, 0);
+            const bool from_edited = ImGui::IsItemDeactivatedAfterEdit();
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 4.5f);
+            ImGui::InputInt("##to", &edit.to, 0, 0);
+            if (from_edited || ImGui::IsItemDeactivatedAfterEdit()) {
+                edit.from = std::clamp(edit.from, 0, max_value);
+                edit.to = std::clamp(edit.to, 0, max_value);
+                const uint32_t id = watch.id;
+                const bitforge::WatchCondition condition{edit.when, static_cast<uint32_t>(edit.from), static_cast<uint32_t>(edit.to)};
+                const bool ok = emu_thread_.call([id, condition](EmuThread::Core& c) {
+                    return c.emu.loaded() && c.emu.watches().set_condition(id, condition) && c.emu.save_watches();
+                });
+                ram_message_error_ = !ok;
+                if (!ok) ram_message_ = "Could not save watches.";
+            }
+            if (static_cast<float>(ImGui::GetTime()) < edit.matched_until) {
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(0.95f, 0.82f, 0.28f, 1.f), "matched");
+            }
+            ImGui::TableNextColumn();
+            ImGui::BeginDisabled(watch.domain != bitforge::WatchDomain::Wram);
+            if (ImGui::SmallButton("Cheat")) {
+                const uint32_t id = watch.id;
+                struct Made {
+                    bool missing = false;
+                    bool refused = false;
+                    bool saved = true;
+                    bool added = false;
+                    std::string code;
+                    std::vector<bitforge::CheatEntry> cheats;
+                };
+                const Made made = emu_thread_.call([id](EmuThread::Core& c) {
+                    Made out;
+                    if (!c.emu.loaded()) {
+                        out.missing = true;
+                        return out;
+                    }
+                    const bitforge::Watch* found = c.emu.watches().find(id);
+                    if (!found) {
+                        out.missing = true;
+                        return out;
+                    }
+                    const auto code = c.emu.watches().cheat_code(id);
+                    if (!code) {
+                        out.refused = true;
+                        return out;
+                    }
+                    auto list = c.emu.cheats();
+                    const auto existing = std::find_if(list.begin(), list.end(), [&](const bitforge::CheatEntry& entry) { return entry.code == *code; });
+                    if (existing == list.end()) {
+                        list.push_back({true, *code, found->label});
+                        out.added = true;
+                        out.saved = c.emu.set_cheats(std::move(list));
+                    } else if (!existing->enabled) {
+                        existing->enabled = true;
+                        out.added = true;
+                        out.saved = c.emu.set_cheats(std::move(list));
+                    }
+                    out.code = *code;
+                    out.cheats = c.emu.cheats();
+                    return out;
+                });
+                if (made.missing) {
+                    ram_message_ = "That watch is gone.";
+                    ram_message_error_ = true;
+                } else if (made.refused) {
+                    ram_message_ = "SRAM watches can't become cheats.";
+                    ram_message_error_ = true;
+                } else if (!made.saved) {
+                    ram_message_ = "Could not save the cheat.";
+                    ram_message_error_ = true;
+                } else {
+                    cheats_ = made.cheats;
+                    cheats_rom_ = status_.rom_path;
+                    ram_message_error_ = false;
+                    ram_message_ = made.added ? "Added cheat " + made.code + "." : "Cheat " + made.code + " is already on.";
+                }
+            }
+            ImGui::EndDisabled();
+            if (watch.domain != bitforge::WatchDomain::Wram && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("SRAM watches can't become cheats.");
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Delete")) {
+                const uint32_t id = watch.id;
+                const bool ok = emu_thread_.call([id](EmuThread::Core& c) {
+                    return c.emu.loaded() && c.emu.watches().remove_watch(id) && c.emu.save_watches();
+                });
+                ram_message_error_ = !ok;
+                if (!ok) ram_message_ = "Could not save watches.";
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+
+    if (!ram_message_.empty()) {
+        if (ram_message_error_) ImGui::TextColored(ImVec4(1.f, 0.4f, 0.4f, 1.f), "%s", ram_message_.c_str());
+        else ImGui::TextDisabled("%s", ram_message_.c_str());
+    }
+    if (!view.marks.freeze && !view.marks.cheat && !view.marks.hand_edit) {
+        ImGui::TextUnformatted("This run is clean.");
+    } else {
+        std::string used = "This run used ";
+        bool any = false;
+        auto add = [&](bool on, const char* word) {
+            if (!on) return;
+            if (any) used += ", ";
+            used += word;
+            any = true;
+        };
+        add(view.marks.freeze, "freezes");
+        add(view.marks.cheat, "cheats");
+        add(view.marks.hand_edit, "hand edits");
+        used += ".";
+        ImGui::TextUnformatted(used.c_str());
+    }
+    ImGui::TextDisabled("Watches are saved per game. Freezes reset when you close the game. Each watch is read once a frame.");
 }
 
 auto App::apply_cheats() -> void {

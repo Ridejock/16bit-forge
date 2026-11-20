@@ -2,6 +2,7 @@
 #pragma once
 #include "snes/cheats.hpp"
 #include "snes/controllers.hpp"
+#include "snes/ramwatch.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -111,6 +112,34 @@ public:
     // Applies the list (enabled entries, from the next bus read) and writes the file.
     auto set_cheats(std::vector<CheatEntry> entries) -> bool;
 
+    // ---- Watches: watches/<rom>.wch, loaded at boot. Freezes are not in the file. -----------
+    struct MemorySearchView {
+        bool searching = false;
+        WatchDomain domain = WatchDomain::Wram;
+        uint32_t candidates = 0;
+        struct Hit {
+            uint32_t offset = 0;
+            uint8_t value = 0;
+        };
+        std::vector<Hit> hits;  // empty when there are too many to list
+        std::size_t sram_bytes = 0;
+        std::vector<Watch> watches;
+        RunMarks marks;
+    };
+    auto watches() -> RamWatch&;
+    auto watches() const -> const RamWatch&;
+    auto watches_path() const -> std::string;
+    auto save_watches() -> bool;
+    auto region_bytes(WatchDomain domain) -> std::vector<uint8_t>;
+    auto memory_view(uint32_t hit_limit = 32) -> MemorySearchView;
+    auto run_marks() const -> RunMarks;
+    auto peek_wram(uint32_t offset) const -> uint8_t;
+    // Pokes the watch's bytes once and marks the run as hand-edited.
+    auto edit_watch(uint32_t id, uint32_t value) -> bool;
+    // Freezes (and writes now, so a paused game changes immediately) or clears the freeze.
+    auto freeze_watch(uint32_t id, bool frozen, uint32_t value) -> bool;
+    auto set_watch_size(uint32_t id, uint8_t size) -> bool;
+
     // Stereo int16 frames (L, R, L, R, ...) the last run_frame() produced, at audio_sample_rate().
     auto audio_samples() const -> std::span<const int16_t>;
     static auto audio_sample_rate() -> int;  // 32040 Hz
@@ -122,6 +151,7 @@ private:
     auto update_test_pattern() -> void;
     auto load_sram() -> void;
     auto load_cheats() -> void;
+    auto load_watches() -> void;
     auto rom_stem() const -> std::string;
 
     std::unique_ptr<System> system_;

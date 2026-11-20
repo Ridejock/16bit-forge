@@ -27,6 +27,10 @@ are emulated at the instruction level rather than with game-specific hacks.
     snapshots (click one to play from there, right-click to save that moment to a slot)
   - battery saves and real-time-clock saves, written automatically
   - cheats: Game Genie, Pro Action Replay and raw address codes
+  - memory watch and RAM search (M, or Debug > Memory watch / RAM search). Watches are saved
+    per game. Freeze holds a value until you close the game, and the Cheat button makes a
+    normal code (an SRAM watch can't). Each watch has a permanent id, is read once a frame,
+    and can test "changed from 3 to 4"
   - GPU renderer (Vulkan / Direct3D 12 / Metal through SDL_GPU) with filter shaders:
     nearest, sharp-bilinear, xBR, ScaleFX, CRT scanlines, CRT-Lottes (optional curvature),
     NTSC composite and S-Video signal simulation into a CRT (presets in `shaders/presets.ini`);
@@ -68,7 +72,7 @@ emulator.
 - The sound chip's 64-byte boot ROM (IPL) is built in, as in other SNES emulators; see
   THIRD_PARTY_NOTICES.md.
 - Saves go next to the program: `saves/` (battery RAM, `.srm`, and clock, `.rtc`),
-  `states/` (save states, `.sst`), `cheats/` (`.cht`), `logs/`. Settings are in
+  `states/` (save states, `.sst`), `cheats/` (`.cht`), `watches/` (`.wch`), `logs/`. Settings are in
   `16bitForge.ini`; a `snes_emulator.ini` from before the rename is read once if there is no
   `16bitForge.ini` yet.
 
@@ -90,6 +94,7 @@ box):
 | Fast-forward (hold) | Tab | Right trigger |
 | Fast-forward toggle | ` (backtick) | Right stick click |
 | Pause / run | Space | |
+| Memory watch / RAM search | M | |
 | Timeline | click a thumbnail; right-click saves that moment to a slot | |
 | Save state 1-10 | Shift+F1 ... Shift+F10 | |
 | Load state 1-10 | F1 ... F10 | |
@@ -142,8 +147,8 @@ With GCC 14 or newer, install Clang too: the shadercross tool is then built with
 
 ### Tests
 
-`ctest` runs ten suites (CPU, PPU, APU, save states, enhancement chips, audio sync, input,
-filter presets, frame pacing, threading). They need no ROM files: they use hand-written instruction tests and
+`ctest` runs eleven suites (CPU, PPU, APU, save states, enhancement chips, audio sync, input,
+filter presets, frame pacing, threading, memory watches). They need no ROM files: they use hand-written instruction tests and
 a small test ROM generated in code. To also run free test ROMs (for example PeterLemon's or
 gilyon's SNES test suites), point `BITFORGE_TEST_ROMS_DIR` (CMake option or environment variable)
 at a folder of `.sfc` / `.spc` files, or pass ROM paths on a suite's command line.

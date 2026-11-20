@@ -93,6 +93,9 @@ private:
     auto draw_audio_panel() -> void;
     auto draw_speed_panel() -> void;
     auto draw_cheats_panel() -> void;
+    auto draw_ram_panel() -> void;
+    auto toggle_ram_panel() -> void;
+    auto save_ram_watches() -> void;
     auto apply_cheats() -> void;
     auto apply_speed_settings() -> void;
     auto draw_hotkey_rows() -> void;
@@ -165,6 +168,27 @@ private:
     bool show_audio_ = false;
     bool show_speed_ = false;
     bool show_cheats_ = false;
+    bool show_ramwatch_ = false;
+    bool ramwatch_select_ = false;  // select the RAM search tab on the frame it is opened
+    // Edits for the open game's watches. The emulation thread owns the watches themselves.
+    struct RamEdit {
+        uint32_t id = 0;
+        std::array<char, 48> label{};
+        int hold = 0;
+        bool hold_touched = false;
+        bool hold_active = false;
+        int from = 0;
+        int to = 0;
+        bool when = false;
+        float matched_until = 0.f;
+    };
+    std::vector<RamEdit> ram_edits_;
+    std::string ram_rom_;
+    std::string ram_message_;
+    bool ram_message_error_ = false;
+    int ram_domain_ = 0;
+    int ram_compare_ = 0;
+    int ram_value_ = 0;
     // The Cheats tab's copy of the running game's list (the emulation thread owns the real one).
     std::vector<bitforge::CheatEntry> cheats_;
     std::string cheats_rom_;

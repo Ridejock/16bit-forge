@@ -77,6 +77,7 @@ auto System::run_frame() -> void {
     
     apu.clear_samples();
     bus.apply_ram_cheats();  // the frame starts in vblank, where a Pro Action Replay writes
+    service_watches();       // freezes overwrite those bytes, then each watch is read once
     while (true) {
         // The bus times each instruction in master clocks from the speed of every address it
         // touched (FastROM, MEMSEL), plus any DMA it started; HDMA time lands in the next step.
@@ -134,7 +135,10 @@ auto System::load_state(std::span<const uint8_t> data, uint32_t version) -> bool
     std::vector<uint8_t> backup = save_state();
     Archive ar = Archive::loader(data, version);
     serialize(ar);
-    if (ar.ok() && ar.remaining() == 0) return true;
+    if (ar.ok() && ar.remaining() == 0) {
+        watches_.forget_samples();  // a condition must not fire across the load
+        return true;
+    }
     Archive restore = Archive::loader(backup);
     serialize(restore);
     return false;
@@ -153,6 +157,50 @@ auto System::rtc_save(int64_t now) -> std::vector<uint8_t> {
 auto System::rtc_load(std::span<const uint8_t> data, int64_t now) -> bool {
     auto* chip = bus.cart().coprocessor();
     return chip && chip->rtc_load(data, now);
+}
+
+auto System::read_memory(WatchDomain domain, uint32_t offset) -> std::optional<uint8_t> {
+    if (domain == WatchDomain::Wram) {
+        if (offset >= RamWatch::kWramBytes) return std::nullopt;
+        return bus.peek_wram(offset);
+    }
+    const std::span<uint8_t> ram = sram();
+    if (offset >= ram.size()) return std::nullopt;
+    return ram[offset];
+}
+
+auto System::write_memory(WatchDomain domain, uint32_t offset, uint8_t value) -> bool {
+    if (domain == WatchDomain::Wram) {
+        if (offset >= RamWatch::kWramBytes) return false;
+        bus.poke_wram(offset, value);
+        return true;
+    }
+    return bus.cart().poke_sram(offset, value);
+}
+
+auto System::copy_memory(WatchDomain domain) -> std::vector<uint8_t> {
+    if (domain == WatchDomain::Wram) {
+        std::vector<uint8_t> out(RamWatch::kWramBytes);
+        for (uint32_t i = 0; i < RamWatch::kWramBytes; ++i) out[i] = bus.peek_wram(i);
+        return out;
+    }
+    const std::span<uint8_t> ram = sram();
+    return {ram.begin(), ram.end()};
+}
+
+auto System::load_test_rom(const std::vector<uint8_t>& data, memory::MapMode mode, std::size_t sram_bytes) -> void {
+    watches_ = RamWatch{};
+    bus.load_test_rom(data, mode, sram_bytes);
+    reset();
+}
+
+auto System::service_watches() -> void {
+    bool wrote = false;
+    for (const FreezeByte& byte : watches_.freeze_bytes()) {
+        if (write_memory(byte.domain, byte.offset, byte.value)) wrote = true;
+    }
+    if (wrote) watches_.note_freeze_applied();
+    watches_.sample([this](WatchDomain domain, uint32_t offset) { return read_memory(domain, offset); });
 }
 
 } // namespace bitforge

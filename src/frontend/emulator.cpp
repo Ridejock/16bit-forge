@@ -27,6 +27,7 @@ constexpr uint32_t kSweepColor = 0xFFFFFFFF;
 constexpr const char* kStatesFolder = "states";
 constexpr const char* kSavesFolder = "saves";
 constexpr const char* kCheatsFolder = "cheats";
+constexpr const char* kWatchesFolder = "watches";
 constexpr const char* kFirmwareFolder = "firmware";  // user-supplied coprocessor firmware
 
 auto read_file(const std::string& path) -> std::optional<std::vector<uint8_t>> {
@@ -85,6 +86,7 @@ auto Emulator::load(const std::string& path) -> bool {
     rom_name_ = std::filesystem::path(path).filename().string();
     load_sram();
     load_cheats();
+    load_watches();
     auto [w, h] = system_->get_framebuffer_size();
     width_ = w;
     height_ = h;
@@ -323,6 +325,105 @@ auto Emulator::set_cheats(std::vector<CheatEntry> entries) -> bool {
     if (cheats_.empty() && !fs::exists(path, ec)) return true;
     const std::string text = format_cheat_file(cheats_);
     return write_file(path, std::span(reinterpret_cast<const uint8_t*>(text.data()), text.size()));
+}
+
+auto Emulator::watches_path() const -> std::string {
+    return (fs::path(data_dir_) / kWatchesFolder / (rom_stem() + ".wch")).string();
+}
+
+auto Emulator::watches() -> RamWatch& { return system_->watches(); }
+
+auto Emulator::watches() const -> const RamWatch& { return system_->watches(); }
+
+auto Emulator::load_watches() -> void {
+    if (const auto data = read_file(watches_path())) {
+        system_->watches().parse(std::string_view(reinterpret_cast<const char*>(data->data()), data->size()));
+        utils::Logger::info(utils::LogChannel::Rom, "Watches: %zu loaded (%s)", system_->watches().list().size(),
+                            watches_path().c_str());
+    }
+}
+
+auto Emulator::save_watches() -> bool {
+    if (!system_) return false;
+    const std::string path = watches_path();
+    std::error_code ec;
+    if (system_->watches().list().empty() && !fs::exists(path, ec)) return true;
+    const std::string text = system_->watches().format();
+    return write_file(path, std::span(reinterpret_cast<const uint8_t*>(text.data()), text.size()));
+}
+
+auto Emulator::region_bytes(WatchDomain domain) -> std::vector<uint8_t> {
+    if (!system_) return {};
+    return system_->copy_memory(domain);
+}
+
+auto Emulator::memory_view(uint32_t hit_limit) -> MemorySearchView {
+    MemorySearchView view;
+    if (!system_) return view;
+    const RamWatch& ram = system_->watches();
+    view.searching = ram.searching();
+    view.domain = ram.search_domain();
+    view.candidates = ram.candidate_count();
+    view.sram_bytes = system_->sram().size();
+    view.watches.assign(ram.list().begin(), ram.list().end());
+    view.marks = ram.marks();
+    if (view.searching && view.candidates > 0 && view.candidates <= hit_limit) {
+        for (const uint32_t offset : ram.first_candidates(hit_limit)) {
+            const std::optional<uint8_t> byte = system_->read_memory(view.domain, offset);
+            if (byte) view.hits.push_back({offset, *byte});
+        }
+    }
+    return view;
+}
+
+auto Emulator::run_marks() const -> RunMarks {
+    return system_ ? system_->watches().marks() : RunMarks{};
+}
+
+auto Emulator::peek_wram(uint32_t offset) const -> uint8_t {
+    return system_ ? system_->peek_wram(offset) : 0;
+}
+
+auto Emulator::edit_watch(uint32_t id, uint32_t value) -> bool {
+    if (!system_) return false;
+    const Watch* watch = system_->watches().find(id);
+    if (!watch) return false;
+    const WatchDomain domain = watch->domain;
+    const uint32_t offset = watch->offset;
+    const uint8_t size = watch->size;
+    bool wrote = false;
+    for (uint8_t i = 0; i < size; ++i) {
+        wrote = system_->write_memory(domain, offset + i, static_cast<uint8_t>((value >> (8 * i)) & 0xFF)) || wrote;
+    }
+    if (wrote) system_->watches().note_hand_edit();
+    return wrote;
+}
+
+auto Emulator::freeze_watch(uint32_t id, bool frozen, uint32_t value) -> bool {
+    if (!system_) return false;
+    const Watch* watch = system_->watches().find(id);
+    if (!watch) return false;
+    const WatchDomain domain = watch->domain;
+    const uint32_t offset = watch->offset;
+    const uint8_t size = watch->size;
+    if (!frozen) return system_->watches().set_frozen(id, false, value);
+    bool wrote = false;
+    for (uint8_t i = 0; i < size; ++i) {
+        wrote = system_->write_memory(domain, offset + i, static_cast<uint8_t>((value >> (8 * i)) & 0xFF)) || wrote;
+    }
+    if (!wrote) return false;
+    system_->watches().set_frozen(id, true, value);
+    system_->watches().note_freeze_applied();
+    return true;
+}
+
+auto Emulator::set_watch_size(uint32_t id, uint8_t size) -> bool {
+    if (!system_) return false;
+    const Watch* watch = system_->watches().find(id);
+    if (!watch) return false;
+    if (watch->domain == WatchDomain::Sram && static_cast<std::size_t>(watch->offset) + size > system_->sram().size()) return false;
+    if (!system_->watches().set_size(id, size)) return false;
+    return save_watches();
 }
 
 auto Emulator::rtc_path() const -> std::string {
