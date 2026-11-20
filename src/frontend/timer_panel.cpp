@@ -280,6 +280,10 @@ auto TimerPanel::draw_times(const RunTimer& t, Nanos now) -> void {
     ImGui::SameLine();
     ImGui::BeginGroup();
     ImGui::TextDisabled("%s  %s", speedrun::info(other(m)).short_label.data(), speedrun::format_time(t.time(other(m), now)).c_str());
+    ImGui::SameLine();
+    ImGui::TextDisabled("  Lag  %lld", static_cast<long long>(t.lag_frames()));
+    ImGui::SetItemTooltip("Lag frames in this attempt's game time: frames in which the game didn't read\n"
+                          "the controller. Race verification summaries record them too.");
     ImGui::TextDisabled("%s  %s", speedrun::info(m).label.data(), speedrun::state_label(t.state()).data());
     if (const auto race = t.race_status(); race != speedrun::RaceStatus::Off) {
         ImGui::SameLine();

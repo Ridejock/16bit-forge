@@ -230,11 +230,13 @@ auto test_summary() -> void {
     v.started = "11/14/2023 22:13:20";
     v.final_time = {83 * kSec, 80 * kSec};
     v.game_frames = 4808;
+    v.lag_frames = 312;
     v.splits = {{"One", {40 * kSec, 39 * kSec}}, {"Two", {83 * kSec, 80 * kSec}}};
     const std::string json = format_verification(v);
     CHECK(json.find("\"game\": \"Test \\\"Game\\\"\"") != std::string::npos);  // escaped
     CHECK(json.find("\"crc32\": \"1234ABCD\"") != std::string::npos);
-    CHECK(json.find("\"standard\": \"NTSC\"") != std::string::npos && json.find("\"frame_rate\": 60.0988") != std::string::npos);
+    CHECK(json.find("\"standard\": \"NTSC\"") != std::string::npos && json.find("\"frame_rate\": 60.0988139") != std::string::npos);
+    CHECK(json.find("\"game_frames\": 4808,\n  \"lag_frames\": 312,") != std::string::npos);
     CHECK(json.find("\"race_verified\": true") != std::string::npos);
     CHECK(json.find("\"RealTime\": \"1:23.00\", \"GameTime\": \"1:20.00\"") != std::string::npos);
     for (const GuardInfo& g : kGuards) CHECK(json.find("\"" + std::string(g.key) + "\"") != std::string::npos);

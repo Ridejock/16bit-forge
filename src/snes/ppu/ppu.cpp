@@ -310,7 +310,7 @@ auto PPU::step(uint32_t master_clocks) -> bool {
 
     while (master_clocks > 0) {
         // Run to the next event on this line: HDMA init (line 0), H-blank, or the end of the line.
-        int event = kClocksPerLine;
+        int event = line_clocks(current_scanline);
         if (line_clock < kHblankClock) event = kHblankClock;
         if (current_scanline == 0 && line_clock < kHdmaInitClock) event = kHdmaInitClock;
 
@@ -334,11 +334,24 @@ auto PPU::step(uint32_t master_clocks) -> bool {
     return frame_done;
 }
 
+auto PPU::line_clocks(int v, bool next) const -> int {
+    const bool field = next ? !field_ : field_;
+    return (v == timing::kShortLine && field && !frame_interlace_) ? timing::kShortLineClocks : kClocksPerLine;
+}
+
 auto PPU::clocks_until_line(int line) const -> uint64_t {
     const int lines = lines_this_frame();
-    const int whole = ((line - current_scanline) % lines + lines) % lines;
+    int whole = ((line - current_scanline) % lines + lines) % lines;
     int64_t clocks = static_cast<int64_t>(whole) * kClocksPerLine - line_clock;
-    if (clocks <= 0) clocks += static_cast<int64_t>(lines) * kClocksPerLine;
+    if (clocks <= 0) {
+        clocks += static_cast<int64_t>(lines) * kClocksPerLine;
+        whole += lines;
+    }
+    // Less the short line, in this frame or the next, where the way there runs through it.
+    const int end = current_scanline + whole;  // the lines run: current_scanline .. end - 1
+    constexpr int s = timing::kShortLine;
+    if (current_scanline <= s && s < end) clocks -= kClocksPerLine - line_clocks(s);
+    if (s < end - lines) clocks -= kClocksPerLine - line_clocks(s, true);
     return static_cast<uint64_t>(clocks);
 }
 
@@ -346,10 +359,16 @@ auto PPU::hdma_timing(uint64_t ahead) const -> HdmaTiming {
     constexpr uint64_t kNever = UINT64_MAX;
     const int lines = lines_this_frame();
     int line = current_scanline;
+    bool next = false;  // `line` is in the next frame
+    auto advance = [&] {
+        if (++line < lines) return;
+        line = 0;
+        next = !next;
+    };
     uint64_t clock = static_cast<uint64_t>(line_clock) + ahead;
-    while (clock >= static_cast<uint64_t>(kClocksPerLine)) {
-        clock -= kClocksPerLine;
-        line = (line + 1) % lines;
+    while (clock >= static_cast<uint64_t>(line_clocks(line, next))) {
+        clock -= static_cast<uint64_t>(line_clocks(line, next));
+        advance();
     }
     HdmaTiming timing{kNever, kNever};
     uint64_t distance = 0;
@@ -360,9 +379,9 @@ auto PPU::hdma_timing(uint64_t ahead) const -> HdmaTiming {
         if (line < vblank_line() && clock < kHblankClock && timing.run == kNever) {
             timing.run = distance + (kHblankClock - clock);
         }
-        distance += kClocksPerLine - clock;
+        distance += static_cast<uint64_t>(line_clocks(line, next)) - clock;
         clock = 0;
-        line = (line + 1) % lines;
+        advance();
     }
     return timing;
 }

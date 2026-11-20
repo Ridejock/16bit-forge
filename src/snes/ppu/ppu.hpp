@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 #include "snes/types.hpp"
+#include "snes/timing.hpp"
 #include "snes/memory/bus.hpp"
 #include "snes/serialize.hpp"
 #include "snes/ppu/renderer.hpp"
@@ -19,8 +20,8 @@ public:
     
     auto connect_bus(memory::Bus* bus_ptr) -> void { bus = bus_ptr; }
     
-    // Advance the video clock by `master_clocks` (21.477 MHz). Lines are 1364 clocks, frames
-    // 262 lines. A visible line is drawn as the beam passes: up to the beam on each mid-line
+    // Advance the video clock by `master_clocks` (21.477 MHz). Lines are 1364 clocks (line 240 of
+    // every other frame is 1360 with interlace off), frames 262 lines. A visible line is drawn as the beam passes: up to the beam on each mid-line
     // register write and the rest at H-blank, after which HDMA runs.
     // Returns true when line 261 wraps to 0.
     auto step(uint32_t master_clocks) -> bool;
@@ -35,6 +36,9 @@ public:
     }
     auto vblank_line() const -> int { return (setini & 0x04) ? 240 : 225; }
     auto frame_lines() const -> int { return lines_this_frame(); }  // 262, or 263 on an interlaced odd frame
+    // Master clocks in line `v` of this frame (`next`: of the next one): 1364, or 1360 for the
+    // short line (240) of the frames with the field flag set when interlace is off.
+    auto line_clocks(int v, bool next = false) const -> int;
     // Master clocks from the current position to the start of `line` (always > 0: a line that has
     // just started is a whole frame away).
     auto clocks_until_line(int line) const -> uint64_t;
@@ -77,8 +81,8 @@ public:
     static constexpr int kOverscanHeight = 239;    // SETINI bit 2
     static constexpr int kMaxWidth = WIDTH * 2;    // hi-res
     static constexpr int kMaxHeight = kOverscanHeight * 2;  // interlace + overscan
-    static constexpr int kClocksPerLine = 1364;
-    static constexpr int kLinesPerFrame = 262;     // +1 on interlaced even fields
+    static constexpr int kClocksPerLine = timing::kLineClocks;      // 1364, but see line_clocks()
+    static constexpr int kLinesPerFrame = timing::kLinesPerFrame;  // 262, +1 on interlaced even fields
     static constexpr int kHblankClock = 274 * 4;     // dot 274: H-blank starts, line is drawn, HDMA
     static constexpr int kHdmaInitClock = 6 * 4;     // dot 6 of line 0: HDMA tables reload
     static constexpr int kFirstPixelDot = 22;        // dot that outputs pixel 0

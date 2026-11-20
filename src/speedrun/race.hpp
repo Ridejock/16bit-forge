@@ -112,6 +112,7 @@ struct Verification {
   std::string ended;
   Times final_time;
   int64_t game_frames = 0;
+  int64_t lag_frames = 0;  // of game_frames, those the game read no controller in
   struct Split {
     std::string name;
     Times time;  // cumulative; empty = skipped

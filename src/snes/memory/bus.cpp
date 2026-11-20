@@ -76,6 +76,7 @@ auto Bus::read_mapped(Address address) -> Byte {
       return open_bus;
 
     case MemoryRegion::CPU_IO:
+      if (offset >= 0x4218) input_read_ = true;  // the auto-read pad latches
       return open_bus = read_cpu_io(offset);
 
     case MemoryRegion::APU_REGISTERS:
@@ -84,6 +85,7 @@ auto Bus::read_mapped(Address address) -> Byte {
       return open_bus;
 
     case MemoryRegion::JOYPAD:
+      input_read_ = true;
       return open_bus = static_cast<Byte>((open_bus & 0xFC) | read_joypad_port(offset));
 
     case MemoryRegion::DMA:
@@ -259,6 +261,7 @@ auto Bus::reset() -> void {
   nmi_fresh = nmi_blocked = false;
   rdnmi_read_early = false;
   timeup_read_early = false;
+  input_read_ = false;
   for (auto& ch : dma_channels) ch.hdma_terminated = true;
   cartridge->reset();
 }
@@ -327,15 +330,20 @@ auto Bus::timer_fires_within(uint64_t clocks) const -> bool {
   if (!ppu || clocks == 0) return false;
   int v = ppu->vcounter();
   int c = ppu->hclock();
+  bool next = false;  // v is in the next frame
   const int lines = ppu->frame_lines();
   while (clocks > 0) {
-    const auto run = static_cast<int>(std::min<uint64_t>(clocks, static_cast<uint64_t>(ppu::PPU::kClocksPerLine - c)));
+    const int length = ppu->line_clocks(v, next);
+    const auto run = static_cast<int>(std::min<uint64_t>(clocks, static_cast<uint64_t>(length - c)));
     if (timer_hits(v, c, c + run)) return true;
     c += run;
     clocks -= static_cast<uint64_t>(run);
-    if (c == ppu::PPU::kClocksPerLine) {
+    if (c == length) {
       c = 0;
-      v = (v + 1) % lines;
+      if (++v == lines) {
+        v = 0;
+        next = !next;
+      }
     }
   }
   return false;
@@ -343,7 +351,10 @@ auto Bus::timer_fires_within(uint64_t clocks) const -> bool {
 
 auto Bus::auto_joypad_busy() const -> bool {
   if (!(nmitimen & 0x01) || !ppu || !vblank_active) return false;
-  const int since = (ppu->vcounter() - ppu->vblank_line()) * ppu::PPU::kClocksPerLine + ppu->hclock();
+  int since = (ppu->vcounter() - ppu->vblank_line()) * ppu::PPU::kClocksPerLine + ppu->hclock();
+  if (ppu->vblank_line() <= timing::kShortLine && ppu->vcounter() > timing::kShortLine) {
+    since -= ppu::PPU::kClocksPerLine - ppu->line_clocks(timing::kShortLine);  // overscan: past the short line
+  }
   return since >= kAutoJoypadStart && since < kAutoJoypadStart + kAutoJoypadClocks;
 }
 

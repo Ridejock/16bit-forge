@@ -178,6 +178,7 @@ auto EmuThread::Core::write_verification_if_due() -> void {
     v.ended = speedrun::utc_stamp(static_cast<int64_t>(std::time(nullptr)));
     v.final_time = t.splits().empty() ? speedrun::Times{} : t.splits().back();
     v.game_frames = t.game_frames();
+    v.lag_frames = t.lag_frames();
     for (size_t i = 0; i < run.segments.size() && i < t.splits().size(); i++) v.splits.push_back({run.segments[i].name, t.splits()[i]});
     attach_movie(v);
     const std::string path = speedrun::verification_path(splits.file.path, v.attempt);
@@ -584,6 +585,7 @@ auto EmuThread::publish_status() -> void {
     s.rom_path = c.emu.rom_path();
     s.test_pattern = s.loaded && c.emu.showing_test_pattern();
     s.frame_count = c.emu.frame_count();
+    s.lag_frames = c.emu.lag_frames();
     s.frames_run = frames_run_;
     s.fps = fps_;
     s.frame_ms_avg = frame_ms_avg_;

@@ -96,6 +96,7 @@ add_library(bitforge_core STATIC
     src/debug/memory_value.cpp
     src/debug/ram_search.cpp
     src/debug/memory_watch.cpp
+    src/debug/timing_check.cpp
     src/speedrun/splits.cpp
     src/speedrun/run_timer.cpp
     src/speedrun/xml.cpp
@@ -122,6 +123,7 @@ add_executable(${PROJECT_NAME}
     src/frontend/rewind.cpp
     src/frontend/memory_panel.cpp
     src/frontend/timer_panel.cpp
+    src/frontend/timing_report.cpp
     src/frontend/game_window.cpp
     src/frontend/input.cpp
     src/frontend/settings.cpp
@@ -261,6 +263,15 @@ add_executable(movie_tests tests/movie_tests.cpp src/frontend/emulator.cpp src/f
 target_include_directories(movie_tests PRIVATE src)
 target_link_libraries(movie_tests PRIVATE bitforge_core)
 
+# Timing (src/debug/timing_check.*, src/snes/timing.hpp): the core against documented NTSC hardware
+# timing (line and frame lengths, the short line, the frame rate, NMI, IRQ, auto-joypad, refresh,
+# DMA/HDMA), game time against the exact frame period, the lag frame counter and the timing report.
+# Headless, on built-in programs. Optional: timing_tests --rom <file.sfc> [--frames <n>] adds a
+# scripted run of a real game, replayed through rewind, a save state and a movie.
+add_executable(timing_tests tests/timing_tests.cpp src/frontend/timing_report.cpp src/frontend/emulator.cpp src/frontend/rewind.cpp)
+target_include_directories(timing_tests PRIVATE src)
+target_link_libraries(timing_tests PRIVATE bitforge_core SDL3::SDL3-static)
+
 # Frame pacing (header-only logic, virtual time).
 add_executable(pacer_tests tests/pacer_tests.cpp)
 target_include_directories(pacer_tests PRIVATE src)
@@ -277,7 +288,7 @@ target_link_libraries(thread_tests PRIVATE bitforge_core SDL3::SDL3-static Threa
 add_executable(audio_dump tools/audio_dump.cpp)
 target_link_libraries(audio_dump PRIVATE bitforge_core)
 
-foreach(target ${PROJECT_NAME} bitforge_core cpu_tests ppu_tests apu_tests state_tests chip_tests input_tests filter_tests audio_sync_tests memory_tests timer_tests race_tests movie_tests pacer_tests thread_tests audio_dump)
+foreach(target ${PROJECT_NAME} bitforge_core cpu_tests ppu_tests apu_tests state_tests chip_tests input_tests filter_tests audio_sync_tests memory_tests timer_tests race_tests movie_tests timing_tests pacer_tests thread_tests audio_dump)
     if(MSVC)
         target_compile_options(${target} PRIVATE /W4)
         target_compile_definitions(${target} PRIVATE _CRT_SECURE_NO_WARNINGS)  # fopen/getenv are fine here
@@ -288,7 +299,7 @@ endforeach()
 
 # ---- tests: ctest runs every suite headless (no window, no audio device, no ROM files) ----
 enable_testing()
-foreach(suite cpu_tests ppu_tests apu_tests state_tests chip_tests audio_sync_tests input_tests filter_tests memory_tests timer_tests race_tests movie_tests pacer_tests thread_tests)
+foreach(suite cpu_tests ppu_tests apu_tests state_tests chip_tests audio_sync_tests input_tests filter_tests memory_tests timer_tests race_tests movie_tests timing_tests pacer_tests thread_tests)
     add_test(NAME ${suite} COMMAND ${suite})
     set_tests_properties(${suite} PROPERTIES TIMEOUT 900 ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy")
 endforeach()

@@ -51,6 +51,7 @@ struct EmuStatus {
     std::string rom_path;
     bool test_pattern = false;
     uint64_t frame_count = 0;   // the game's (a state load or reset moves it)
+    uint64_t lag_frames = 0;    // the game's lag frames since power-on or a reset (Emulator::lag_frames)
     uint64_t frames_run = 0;    // frames this thread has emulated, all games
     double fps = 0.0;
     double frame_ms_avg = 0.0;  // emulation time per frame

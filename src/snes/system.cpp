@@ -76,6 +76,7 @@ auto System::run_frame() -> void {
     }
     
     apu.clear_samples();
+    bus.clear_input_read();
     bus.apply_ram_cheats();  // the frame starts in vblank, where a Pro Action Replay writes
     while (true) {
         // The bus times each instruction in master clocks from the speed of every address it
@@ -98,6 +99,7 @@ auto System::run_frame() -> void {
             if (frame_count % 60 == 0) {
                 cpu.print_state();
             }
+            lagged_ = !bus.input_read();
             break;
         }
     }

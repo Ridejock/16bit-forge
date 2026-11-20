@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 #include "frontend/wav_writer.hpp"
+#include "snes/timing.hpp"
 
 #include <SDL3/SDL.h>
 #include <atomic>
@@ -62,7 +63,7 @@ class AudioOutput {
 public:
     static constexpr double kTargetMs = RateControl::kTargetMs;
     static constexpr double kMaxQueueMs = 200.0;     // beyond this the oldest audio is dropped (crossfaded)
-    static constexpr double kFrameMs = 1000.0 / 60.0988;  // one push
+    static constexpr double kFrameMs = 1000.0 / timing::kNtscFrameRate;  // one push
     static constexpr int kFadeFrames = 64;           // 2 ms fades at underrun, resume and drops
     // Startup is measured in emulated frames (pushes), not wall-clock time or device pulls, so a
     // stalled emulation thread (window/GPU creation, the first presents, a ROM load) can't use it up.

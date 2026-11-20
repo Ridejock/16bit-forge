@@ -1760,6 +1760,12 @@ auto App::draw_status_bar() -> void {
         ImGui::SameLine();
         ImGui::Text("|  %s  |  %s", game_.backend_description().c_str(), current_filter().name.c_str());
     }
+    if (loaded) {
+        ImGui::SameLine();
+        ImGui::Text("|  Lag %llu", static_cast<unsigned long long>(status_.lag_frames));
+        ImGui::SetItemTooltip("Lag frames since power-on or the last reset: frames in which the game\n"
+                              "didn't read the controller, so that frame's input went unseen.");
+    }
     if (loaded && status_.test_pattern) {
         ImGui::SameLine();
         ImGui::TextDisabled("|  PPU has not drawn yet: test pattern");

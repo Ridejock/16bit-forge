@@ -46,6 +46,8 @@ struct FrameInfo {
   Clock now;
   bool race = false;    // race mode is on
   bool replay = false;  // a movie is playing (the input isn't a player's)
+  bool lag = false;     // the frame was a lag frame (the game read no controller)
+  uint64_t lag_frames = 0;  // the game's lag frame counter after the frame (a rewind moves it)
 };
 
 enum class Action : uint8_t { None, Start, Split, Undo, Skip, Pause, Resume, Reset };
@@ -109,6 +111,8 @@ public:
   // The timer's reading now (the final time once ended, the offset before the start).
   auto time(Method m, Nanos now) const -> Nanos;
   auto game_frames() const -> int64_t { return game_frames_; }
+  // Lag frames in this attempt's game time (the count at the final split once it has ended).
+  auto lag_frames() const -> int64_t;
   auto started_unix() const -> int64_t { return started_unix_; }  // when this attempt started
   // Segment i's time in this attempt (nullopt if it or the one before was skipped / not done).
   auto segment_time(size_t i, Method m) const -> std::optional<Nanos>;
@@ -158,12 +162,15 @@ private:
   std::vector<Times> splits_;
   std::vector<uint64_t> split_frames_;   // the game frame of each split or skip
   std::vector<int64_t> split_counts_;    // game_frames_ at each split
+  std::vector<int64_t> split_lags_;      // lag_frames_ at each split
   Nanos start_mono_ = 0;
   Nanos pause_start_ = 0;
   Nanos paused_total_ = 0;
   int64_t started_unix_ = 0;
   int64_t game_frames_ = 0;
+  int64_t lag_frames_ = 0;
   uint64_t last_frame_ = 0;
+  uint64_t last_lag_ = 0;   // FrameInfo::lag_frames last frame
   uint64_t hold_until_ = 0;  // auto-splits wait until the game passes this frame
   uint32_t tamper_ = 0;
   bool race_ = false;       // race mode is on

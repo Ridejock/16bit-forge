@@ -28,6 +28,11 @@ public:
     auto load_warning() const -> const std::string& { return bus.cart().load_warning(); }
     auto run_frame() -> void;
     auto reset() -> void;
+    // The last run_frame() was a lag frame: the game read no controller in it ($4016/$4017 or
+    // the auto-read $4218-$421F), so that frame's input went unseen.
+    auto lagged() const -> bool { return lagged_; }
+    // Master clocks since reset, for the timing checks.
+    auto master_clocks() const -> uint64_t { return total_clocks; }
     
     // XRGB8888, packed rows. The size can change from frame to frame: 256 or 512 wide (hi-res),
     // 224 or 239 lines (overscan), doubled with interlace.
@@ -95,6 +100,7 @@ private:
     uint64_t total_clocks = 0;  // master clocks since reset
     uint64_t frame_count = 0;   // frames since power-on (drives the periodic debug dumps)
     bool vram_dumped = false;
+    bool lagged_ = false;
 
     auto serialize(Archive& ar) -> void;
 };

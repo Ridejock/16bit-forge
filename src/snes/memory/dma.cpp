@@ -28,8 +28,9 @@ constexpr std::array<TransferMode, 8> kTransferModes = {{
     {4, {0, 0, 1, 1}},  // 7: same as 3
 }};
 
-// Master clocks. GP-DMA: 8 to start, 8 per channel, 8 per byte. HDMA: 18 per line with any
-// channel active, 8 per channel, 16 more per indirect address load, 8 per byte.
+// Master clocks. GP-DMA: 8 to start, 8 per channel, 8 per byte. HDMA: 18 at the table reload
+// and per line with any channel active, 8 per channel, 16 more per indirect address load, 8 per
+// byte.
 constexpr uint64_t kDmaStartClocks = 8;
 constexpr uint64_t kDmaChannelClocks = 8;
 constexpr uint64_t kDmaByteClocks = 8;
@@ -150,6 +151,7 @@ auto Bus::hdma_reload(DMAChannel& ch) -> void {
 
 auto Bus::hdma_init() -> void {
     dma_active = true;
+    if (hdmaen) pending_clocks += kHdmaOverheadClocks;
     for (size_t i = 0; i < dma_channels.size(); i++) {
         auto& ch = dma_channels[i];
         ch.hdma_terminated = !(hdmaen & (1 << i));

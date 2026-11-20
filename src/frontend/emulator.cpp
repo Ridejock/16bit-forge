@@ -63,9 +63,9 @@ auto write_file(const std::string& path, std::span<const uint8_t> data) -> bool 
 constexpr int kSweepWidth = 4;
 constexpr int kBarsHeightPercent = 75;
 
-// A rewind snapshot: the frame counter, the movie frame (kNoMovieFrame outside a movie), then
-// the machine.
-constexpr size_t kSnapshotHeader = 2 * sizeof(uint64_t);
+// A rewind snapshot: the frame counter, the movie frame (kNoMovieFrame outside a movie), the
+// lag frame counter, then the machine.
+constexpr size_t kSnapshotHeader = 3 * sizeof(uint64_t);
 constexpr uint64_t kNoMovieFrame = ~0ull;
 
 auto put_u64(std::vector<uint8_t>& out, uint64_t v) -> void {
@@ -123,6 +123,7 @@ auto Emulator::boot(const std::string& path, bool battery) -> bool {
     height_ = h;
     test_pattern_.assign(static_cast<size_t>(width_) * static_cast<size_t>(height_), kBlack);
     frames_ = 0;
+    lag_frames_ = 0;
     jump_ = speedrun::Jump::Reset;
     seen_output_ = false;
     update_test_pattern();
@@ -141,6 +142,7 @@ auto Emulator::close_game() -> void {
     rom_path_.clear();
     rom_name_.clear();
     frames_ = 0;
+    lag_frames_ = 0;
 }
 
 auto Emulator::reset() -> void {
@@ -156,6 +158,7 @@ auto Emulator::reset() -> void {
 auto Emulator::reset_machine() -> void {
     system_->reset();
     frames_ = 0;
+    lag_frames_ = 0;
     jump_ = speedrun::Jump::Reset;
     readings_.clear();
 }
@@ -207,7 +210,11 @@ auto Emulator::run_frame() -> void {
         width_ = w;
         height_ = h;
     }
+    if (system_->lagged()) lag_frames_++;
 }
+
+auto Emulator::lagged() const -> bool { return system_ && system_->lagged(); }
+auto Emulator::master_clocks() const -> uint64_t { return system_ ? system_->master_clocks() : 0; }
 
 auto Emulator::framebuffer() const -> const uint32_t* {
     if (!system_) return nullptr;
@@ -597,6 +604,7 @@ auto Emulator::save_snapshot() -> std::vector<uint8_t> {
     std::vector<uint8_t> data;
     put_u64(data, frames_);
     put_u64(data, movie_mode_ != MovieMode::Off ? movie_cursor_ : kNoMovieFrame);
+    put_u64(data, lag_frames_);
     const std::vector<uint8_t> state = system_->save_state();
     data.insert(data.end(), state.begin(), state.end());
     return data;
@@ -610,6 +618,7 @@ auto Emulator::load_snapshot(std::span<const uint8_t> data) -> bool {
     if (movie && (movie_frame == kNoMovieFrame || movie_frame > movie_.frames.size())) return false;  // from before the movie
     if (!system_->load_state(data.subspan(kSnapshotHeader))) return false;
     frames_ = get_u64(data, 0);
+    lag_frames_ = get_u64(data, 2 * sizeof(uint64_t));
     if (movie) rewind_movie(movie_frame);
     jump_ = speedrun::Jump::Rewind;
     readings_.clear();
@@ -777,7 +786,8 @@ auto Emulator::memory_tampered() const -> uint32_t {
 }
 
 auto Emulator::step_timer(speedrun::RunTimer& timer, const speedrun::Clock& now) -> speedrun::Event {
-    const speedrun::FrameInfo frame{frames_, take_jump(), memory_tampered(), now, race_, movie_mode_ == MovieMode::Playing};
+    const speedrun::FrameInfo frame{frames_, take_jump(), memory_tampered(), now, race_, movie_mode_ == MovieMode::Playing,
+                                    lagged(), lag_frames_};
     return timer.on_frame(frame, [this](const debug::Condition& c) { return evaluate(c); });
 }
 

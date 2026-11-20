@@ -53,8 +53,10 @@ auto RunTimer::clear_attempt() -> void {
   splits_.assign(n, {});
   split_frames_.assign(n, 0);
   split_counts_.assign(n, 0);
+  split_lags_.assign(n, 0);
   paused_total_ = 0;
   game_frames_ = 0;
+  lag_frames_ = 0;
   hold_until_ = 0;
   tamper_ = 0;
   race_run_ = false;
@@ -89,6 +91,7 @@ auto RunTimer::split(const Clock& now) -> Event {
   splits_[i] = now_times(now.mono);
   split_frames_[i] = last_frame_;
   split_counts_[i] = game_frames_;
+  split_lags_[i] = lag_frames_;
   if (current_ == splits_.size()) state_ = TimerState::Ended;
   return event(Action::Split, static_cast<int>(i));
 }
@@ -104,6 +107,7 @@ auto RunTimer::undo() -> Event {
   splits_[current_] = {};
   split_frames_[current_] = 0;
   split_counts_[current_] = 0;
+  split_lags_[current_] = 0;
   return event(Action::Undo, static_cast<int>(current_));
 }
 
@@ -112,6 +116,7 @@ auto RunTimer::skip() -> Event {
   splits_[current_] = {};
   split_frames_[current_] = last_frame_;
   split_counts_[current_] = 0;
+  split_lags_[current_] = 0;
   return event(Action::Skip, static_cast<int>(current_++));
 }
 
@@ -230,10 +235,14 @@ auto RunTimer::on_frame(const FrameInfo& f, const ConditionTest& test) -> Event 
       const auto ls = last_split();
       const int64_t floor = ls ? split_counts_[*ls] : 0;
       game_frames_ = std::max(floor, game_frames_ + static_cast<int64_t>(f.frame) - static_cast<int64_t>(last_frame_));
+      const int64_t lag_floor = ls ? split_lags_[*ls] : 0;
+      lag_frames_ = std::max(lag_floor, lag_frames_ + static_cast<int64_t>(f.lag_frames) - static_cast<int64_t>(last_lag_));
     } else {
       game_frames_++;
+      if (f.lag) lag_frames_++;
     }
   }
+  last_lag_ = f.lag_frames;
   set_race(f.race);
   replaying_ = f.replay;
   if (state_ == TimerState::Running || state_ == TimerState::Paused) {
@@ -282,6 +291,11 @@ auto RunTimer::race_status() const -> RaceStatus {
   if (!active() || !race_run_) return RaceStatus::Off;
   if (race_breaks() != 0) return RaceStatus::Broken;
   return state_ == TimerState::Ended ? RaceStatus::Verified : RaceStatus::Clean;
+}
+
+auto RunTimer::lag_frames() const -> int64_t {
+  if (state_ == TimerState::Ended && !split_lags_.empty()) return split_lags_.back();
+  return lag_frames_;
 }
 
 // The newest split's index, if any (skipped segments have no time).

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <filesystem>
+#include <iomanip>
 #include <sstream>
 
 namespace bitforge::speedrun {
@@ -129,7 +130,7 @@ auto format_verification(const Verification& v) -> std::string {
       << "  \"category\": " << json_string(v.category) << ",\n"
       << "  \"rom\": {\"file\": " << json_string(v.rom_file) << ", \"crc32\": " << json_string(crc) << ", \"sha1\": " << json_string(v.rom_sha1)
       << "},\n"
-      << "  \"timing\": {\"standard\": " << json_string(info(v.standard).label) << ", \"frame_rate\": " << info(v.standard).frame_rate
+      << "  \"timing\": {\"standard\": " << json_string(info(v.standard).label) << ", \"frame_rate\": " << std::setprecision(10) << info(v.standard).frame_rate
       << "},\n"
       << "  \"race_mode\": true,\n"
       << "  \"race_verified\": true,\n"
@@ -140,6 +141,7 @@ auto format_verification(const Verification& v) -> std::string {
       << "  \"ended_utc\": " << json_string(v.ended) << ",\n"
       << "  \"final_time\": " << times_json(v.final_time) << ",\n"
       << "  \"game_frames\": " << v.game_frames << ",\n"
+      << "  \"lag_frames\": " << v.lag_frames << ",\n"
       << "  \"splits\": [";
   for (size_t i = 0; i < v.splits.size(); i++) {
     out << (i ? ",\n" : "\n") << "    {\"name\": " << json_string(v.splits[i].name) << ", \"time\": " << times_json(v.splits[i].time) << "}";

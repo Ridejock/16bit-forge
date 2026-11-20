@@ -6,6 +6,7 @@
 // round-trips; the auto-split rules are ours and live in a sidecar file (autosplit.hpp).
 // No SDL or ImGui: the frontend shows it, the tests drive it.
 #include "debug/memory_watch.hpp"
+#include "snes/timing.hpp"
 
 #include <array>
 #include <cstdint>
@@ -42,7 +43,7 @@ struct VideoStandardInfo {
   double frame_rate;  // master clock / clocks per (non-interlaced) frame
 };
 inline constexpr std::array<VideoStandardInfo, 2> kVideoStandards = {{
-    {VideoStandard::Ntsc, "NTSC", 236250000.0 / 11.0 / (262.0 * 1364.0 - 2.0)},  // 60.0988 Hz (every other frame has a line 4 clocks short)
+    {VideoStandard::Ntsc, "NTSC", timing::kNtscFrameRate},                      // 60.0988 Hz (every other frame has a line 4 clocks short)
     {VideoStandard::Pal, "PAL", 21281370.0 / (312.0 * 1364.0)},                  // 50.0070 Hz
 }};
 inline auto info(VideoStandard v) -> const VideoStandardInfo& { return kVideoStandards[static_cast<size_t>(v)]; }

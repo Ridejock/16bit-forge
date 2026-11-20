@@ -107,6 +107,11 @@ public:
   auto hdma_init() -> void;       // line 0: reload every enabled channel's table
   auto hdma_run_line() -> void;   // H-blank of lines 0..224 (or 239)
 
+  // Whether the game has read a controller ($4016/$4017, $4218-$421F) since the last clear: a
+  // frame without such a read is a lag frame.
+  auto input_read() const -> bool { return input_read_; }
+  auto clear_input_read() -> void { input_read_ = false; }
+
   // Edge-latched NMI. True once, when the CPU should take the interrupt.
   auto poll_nmi() -> bool override;
   // Level IRQ line: held while TIMEUP ($4211) bit 7 is set, or by a cartridge coprocessor
@@ -177,6 +182,7 @@ private:
   Address wmadd = 0;    // $2181-$2183 WRAM port address (17-bit)
   Byte open_bus = 0;    // last value seen on the data bus
   Address mar = 0;      // last address on the bus
+  bool input_read_ = false;  // see input_read(); cleared every frame, so not in save states
 
   uint64_t pending_clocks = 0;  // master clocks not yet handed to the PPU
   int cpu_accesses = 0;         // CPU bus accesses in the current instruction

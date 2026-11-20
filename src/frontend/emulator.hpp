@@ -44,8 +44,8 @@ struct MovieStatus {
 // The only surface the UI sees of the core. No SDL or ImGui types cross this line.
 class Emulator {
 public:
-    // NTSC master clock 21.477272 MHz / (262 lines * 1364 clocks).
-    static constexpr double kNtscFrameRate = 60.0988;
+    // NTSC master clock 21.477272 MHz / 357366 clocks (262 lines, one 4 clocks short every other frame).
+    static constexpr double kNtscFrameRate = timing::kNtscFrameRate;
 
     // Save-state slots 1..kStateSlots (F1-F10). SRAM is flushed this often while it changes.
     static constexpr int kStateSlots = 10;
@@ -88,6 +88,11 @@ public:
     auto rom_sha1() const -> const std::array<uint8_t, 20>& { return rom_sha1_; }  // of the ROM file
     auto rom_sha1_hex() const -> std::string;
     auto frame_count() const -> uint64_t { return frames_; }
+    // Lag frames (System::lagged) since power-on or a reset. A rewind takes it back with the
+    // game; a state load leaves it as it was.
+    auto lag_frames() const -> uint64_t { return lag_frames_; }
+    auto lagged() const -> bool;  // the last frame was one
+    auto master_clocks() const -> uint64_t;  // since power-on or a reset (0 without a game)
     // What last moved frame_count() other than a frame (a reset, a state load, a rewind or
     // timeline jump), cleared by the call: the run timer keeps game time and auto-splits right.
     auto take_jump() -> speedrun::Jump { return std::exchange(jump_, speedrun::Jump::None); }
@@ -284,6 +289,7 @@ private:
     int width_ = 0;
     int height_ = 0;
     uint64_t frames_ = 0;
+    uint64_t lag_frames_ = 0;
     bool seen_output_ = false;
 };
 
