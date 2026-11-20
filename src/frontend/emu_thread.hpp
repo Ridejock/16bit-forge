@@ -158,7 +158,7 @@ public:
         // verify.write; verify.emulator names the emulator and its version in it).
         struct Verify {
             bool write = true;
-            std::string emulator;   // "16bit Forge 0.1.1"
+            std::string emulator;   // "16bit Forge <version>"
             uint64_t written = 0;   // the timer event (the finishing split) last written
             std::string path;       // the last file written
         };

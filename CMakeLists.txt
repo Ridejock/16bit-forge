@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 cmake_minimum_required(VERSION 3.24)
 # PROJECT_NAME is the executable, package and settings-file name (16bitForge.exe, 16bitForge.ini).
-project(16bitForge VERSION 0.1.0
+project(16bitForge VERSION 0.1.2
     DESCRIPTION "Forged for the 16-bit era."
     HOMEPAGE_URL "https://github.com/Ridejock/16bit-forge"
     LANGUAGES C CXX)

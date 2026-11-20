@@ -123,7 +123,7 @@ public:
     // Loading one, or rewinding, goes back in the movie: in read-only mode playback carries on
     // from there; otherwise the movie is cut there and recording carries on (a rerecord).
     struct MovieMeta {
-        std::string emulator;  // "16bit Forge 0.1.1"
+        std::string emulator;  // "16bit Forge <version>"
         std::string author;
     };
     // `path` is where stop_movie() writes it. "" or why it can't start.

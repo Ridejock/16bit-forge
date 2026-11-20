@@ -100,7 +100,7 @@ auto verified_runs(const Run& run) -> int;
 
 // ---- The verification summary, for a leaderboard submission ---------------------------------
 struct Verification {
-  std::string emulator;  // "16bit Forge 0.1.1"
+  std::string emulator;  // "16bit Forge <version>"
   std::string game;
   std::string category;
   std::string rom_file;

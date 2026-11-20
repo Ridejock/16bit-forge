@@ -109,7 +109,7 @@ struct Movie {
   uint32_t rom_crc32 = 0;  // as the core loaded the ROM (no copier header)
   std::array<uint8_t, 20> rom_sha1{};  // of the ROM file
   int64_t recorded = 0;    // Unix seconds, when recording started
-  std::string emulator;    // "16bit Forge 0.1.1"
+  std::string emulator;    // "16bit Forge <version>"
   std::string rom_file;
   std::string author;
   std::string notes;
