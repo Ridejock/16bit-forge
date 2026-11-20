@@ -177,6 +177,28 @@ auto write_movie(const std::string& path, const Movie& movie, size_t frames) -> 
   return !ec;
 }
 
+namespace {
+constexpr std::array<MismatchPrompt, 4> kMismatchPrompts = {{
+    {"", ""},
+    {"Play a movie made with another ROM?", "This movie was recorded with a different ROM. It will most likely go out of sync."},
+    {"Play a movie made with another version?",
+     "This movie was recorded with a different version of the emulator. It may go out of sync."},
+    {"Play a movie made with another ROM and version?",
+     "This movie was recorded with a different ROM and a different version of the emulator. It will most likely go "
+     "out of sync."},
+}};
+}  // namespace
+
+auto movie_mismatch(const Movie& movie, uint32_t rom_crc32, const std::array<uint8_t, 20>& rom_sha1, std::string_view emulator)
+    -> uint8_t {
+  uint8_t out = 0;
+  if (movie.rom_crc32 != rom_crc32 || movie.rom_sha1 != rom_sha1) out |= kMismatchRom;
+  if (movie.emulator != emulator) out |= kMismatchEmulator;
+  return out;
+}
+
+auto mismatch_prompt(uint8_t mismatch) -> const MismatchPrompt& { return kMismatchPrompts[mismatch & 3u]; }
+
 auto is_prefix(std::span<const FrameInput> part, std::span<const FrameInput> whole) -> bool {
   return part.size() <= whole.size() && std::equal(part.begin(), part.end(), whole.begin());
 }

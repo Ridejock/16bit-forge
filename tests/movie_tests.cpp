@@ -412,6 +412,34 @@ auto test_battery() -> void {
     fs::remove_all(dir);
 }
 
+// ---- Mismatch warnings ----------------------------------------------------------------------
+
+auto test_mismatch() -> void {
+    Movie m;
+    m.rom_crc32 = 0x12345678;
+    m.rom_sha1.fill(0xAB);
+    m.emulator = "16bit Forge 0.1.0";
+    std::array<uint8_t, 20> sha1{};
+    sha1.fill(0xAB);
+    CHECK(movie_mismatch(m, 0x12345678, sha1, "16bit Forge 0.1.0") == 0);
+    CHECK(movie_mismatch(m, 0x12345679, sha1, "16bit Forge 0.1.0") == kMismatchRom);
+    std::array<uint8_t, 20> other = sha1;
+    other[19] = 0;
+    CHECK(movie_mismatch(m, 0x12345678, other, "16bit Forge 0.1.0") == kMismatchRom);  // same CRC, other SHA-1
+    CHECK(movie_mismatch(m, 0x12345678, sha1, "16bit Forge 0.2.0") == kMismatchEmulator);
+    CHECK(movie_mismatch(m, 0, other, "16bit Forge 0.2.0") == (kMismatchRom | kMismatchEmulator));
+    m.emulator.clear();  // unknown version: warned about
+    CHECK(movie_mismatch(m, 0x12345678, sha1, "16bit Forge 0.1.0") == kMismatchEmulator);
+    // One dialog per case, each with its own title; both in one.
+    const std::string rom = mismatch_prompt(kMismatchRom).title;
+    const std::string version = mismatch_prompt(kMismatchEmulator).title;
+    const std::string both = mismatch_prompt(kMismatchRom | kMismatchEmulator).title;
+    CHECK(rom.find("ROM") != std::string::npos && version.find("version") != std::string::npos);
+    CHECK(both.find("ROM") != std::string::npos && both.find("version") != std::string::npos);
+    CHECK(rom != version && rom != both && version != both);
+    for (const uint8_t bits : {1, 2, 3}) CHECK(*mismatch_prompt(bits).text != '\0');
+}
+
 // ---- Replays in the run timer -----------------------------------------------------------------
 
 auto test_replay_timer() -> void {
@@ -429,16 +457,32 @@ auto test_replay_timer() -> void {
         for (int i = 0; i < 30; i++) t.on_frame(frame(++n, race, false), never);
         t.split(clock(n));
         CHECK(t.race_status() == RaceStatus::Replay);
+        // A replayed run (here a first finish, so a PB and golds) stays out of the run: no attempt,
+        // no history, nothing to save.
+        CHECK(!t.finished_pb() && !t.has_improvements());
         t.reset(clock(n + 1));
-        CHECK(!t.run().attempts.back().race_verified && t.race_status() == RaceStatus::Off);
-        // A movie playing only partway through the run: a replay too.
+        CHECK(t.race_status() == RaceStatus::Off && !t.pending());
+        CHECK(t.run().attempt_count == 0 && t.run().attempts.empty() && t.run().segments[0].history.empty());
+        CHECK(t.run().segments[0].best.empty() && t.run().segments[0].pb.empty());
+        // A movie playing only partway through the run: a replay too, and it uncounts the attempt.
         t.start(clock(++n));
         t.on_frame(frame(++n, race, false), never);
-        CHECK(t.race_status() == (race ? RaceStatus::Clean : RaceStatus::Off));
+        CHECK(t.race_status() == (race ? RaceStatus::Clean : RaceStatus::Off) && t.run().attempt_count == 1);
         t.on_frame(frame(++n, race, true), never);
         t.on_frame(frame(++n, race, false), never);
+        CHECK(t.run().attempt_count == 0);
         t.split(clock(n));
         CHECK(t.race_status() == RaceStatus::Replay && !info(RaceStatus::Replay).tag.empty());
+        t.reset(clock(n + 1));
+        CHECK(t.run().attempt_count == 0 && t.run().attempts.empty() && !t.pending());
+        // A player's run after it counts and is kept as usual.
+        t.start(clock(++n));
+        for (int i = 0; i < 30; i++) t.on_frame(frame(++n, race, false), never);
+        t.split(clock(n));
+        CHECK(t.finished_pb());
+        t.reset(clock(n + 1));
+        CHECK(t.run().attempt_count == 1 && t.run().attempts.size() == 1 && t.pending());
+        CHECK(t.run().attempts[0].race_verified == race);
     }
     // The verification summary names the movie.
     Verification v;
@@ -465,7 +509,8 @@ int main() {
         {"Replay from a save state, race mode refuses it", test_state_start_replay},
         {"Rerecords: states, rewind, read-only, takes", test_rerecords},
         {"Battery save: blank in a movie, the file untouched", test_battery},
-        {"Run timer: replays never verify; summary names the movie", test_replay_timer},
+        {"ROM / version mismatch: warnings, one dialog", test_mismatch},
+        {"Run timer: replays never verify or count; summary names it", test_replay_timer},
     };
     int failed = 0;
     for (const Test& t : tests) {

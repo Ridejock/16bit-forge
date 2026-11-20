@@ -51,7 +51,10 @@ are emulated at the instruction level rather than with game-specific hacks.
     cuts the movie there and counts a rerecord; with Movie > Read-only on, loading a state
     during playback only seeks. A movie recorded in race mode from power-on through a race
     verified run is saved as `movies/<game>/attempt-<n>.bfm`, and its SHA-1 goes into the
-    verification `.json`. A replayed run shows REPLAY and is never race verified
+    verification `.json`. A replayed run shows REPLAY, is never race verified, and stays out
+    of the splits: no attempt count, history, PB or golds. Every movie starts with a blank
+    battery save, and the game's `.srm` / `.rtc` are left alone until it is loaded again.
+    Playing a movie made with another ROM or another emulator version asks first
   - GPU renderer (Vulkan / Direct3D 12 / Metal through SDL_GPU) with filter shaders:
     nearest, sharp-bilinear, xBR, ScaleFX, CRT scanlines, CRT-Lottes (optional curvature),
     NTSC composite and S-Video signal simulation into a CRT (presets in `shaders/presets.ini`);
@@ -60,7 +63,7 @@ are emulated at the instruction level rather than with game-specific hacks.
   - audio sync or video sync, volume and MSU-1 volume, WAV recording
   - log panel with per-component trace channels
 - **Controllers** - keyboard and gamepads (hotplug, press-to-bind), Multitap (up to 5
-  players), SNES Mouse and Super Scope.
+  players), Mouse and Super Scope.
 
 ### Supported enhancement chips
 

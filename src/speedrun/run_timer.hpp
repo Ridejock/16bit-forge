@@ -17,7 +17,8 @@
 //
 // Race mode (race.hpp): an attempt started while it is on is a race run; it stays one until it
 // ends, unless race mode goes off, memory is tampered with or the game jumps (race_status).
-// An attempt a movie played any of is a replay: never verified, whatever else it was.
+// An attempt a movie played any of is a replay: never verified, whatever else it was, and kept
+// out of the run (no attempt count, history, PB or golds).
 #include "speedrun/race.hpp"
 #include "speedrun/splits.hpp"
 
@@ -142,6 +143,7 @@ private:
   auto event(Action action, int segment, bool automatic = false, uint64_t frame = 0) -> Event;
   auto mutate_run() -> Run&;  // copy on write
   auto record_attempt(const Clock& now) -> void;
+  auto count_attempt(bool on) -> void;
   auto apply(const Pending& p) -> void;
   auto clear_attempt() -> void;
   static auto improves(const Run& run, const std::vector<Times>& splits, bool finished, Method m) -> bool;
@@ -168,6 +170,7 @@ private:
   bool race_run_ = false;   // this attempt started in race mode
   bool replaying_ = false;  // a movie played the last frame
   bool replay_run_ = false; // a movie played part of this attempt
+  bool counted_ = false;    // this attempt is in the run's attempt count
   uint32_t race_breaks_ = 0;
   std::vector<Pending> pending_;
   Event last_event_;

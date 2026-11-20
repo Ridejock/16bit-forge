@@ -124,7 +124,9 @@ private:
     struct PendingMovie {
         speedrun::Movie movie;
         std::string path;
+        uint8_t mismatch = 0;  // speedrun::MovieMismatch bits
     };
+    static auto running_version() -> std::string;  // "16bit Forge 0.1.0", as movies and verification files say
     auto apply_movie_settings() -> void;
     auto draw_movie_menu() -> void;
     auto show_movie_dialog(MovieDialog kind) -> void;

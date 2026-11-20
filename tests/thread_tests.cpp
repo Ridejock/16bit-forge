@@ -816,6 +816,12 @@ auto test_race_movie() -> void {
     const EmuStatus replayed = emu.status();
     CHECK(replayed.timer.race_status() == sr::RaceStatus::Replay);
     CHECK(!std::filesystem::exists(sr::verification_path(replayed.splits_path, 2)));
+    // The replay leaves the run alone: no attempt, no history, no PB/golds prompt.
+    const int attempts_before = replayed.timer.run().attempt_count;
+    emu.call([](EmuThread::Core& c) { c.splits.timer.reset(EmuThread::timer_clock()); });
+    const EmuStatus after = emu.status();
+    CHECK(!after.timer.pending() && after.timer.run().attempts.size() == 1 && after.timer.run().attempt_count == attempts_before);
+    CHECK(attempts_before == 1);
     CHECK(wait_for([](const EmuStatus& st) { return st.movie.mode == MovieMode::Off && st.movie_ends == 1; }));  // Live: closed
     emu.stop();
     std::filesystem::remove_all(dir);

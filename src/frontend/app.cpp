@@ -52,7 +52,7 @@ constexpr float kRacePromptWidthEm = 30.f;
 constexpr const char* kRaceTimelineHint = "Off in race mode: no snapshots are kept until you turn it off (Speedrun > Race mode).";
 
 constexpr SDL_DialogFileFilter kRomFilters[] = {
-    {"SNES ROMs", "sfc;smc"},
+    {"Game ROMs", "sfc;smc"},
     {"All files", "*"},
 };
 
@@ -121,7 +121,7 @@ auto App::init() -> bool {
     core.speed = settings_.speed;
     core.apply_speed();
     core.splits.timer.set_method(settings_.timer.primary);
-    core.verify.emulator = std::string(BITFORGE_TITLE) + " " + BITFORGE_VERSION;
+    core.verify.emulator = running_version();
     core.verify.write = settings_.race.write_verification;
     core.set_race(settings_.race.enabled, EmuThread::timer_clock());  // no game yet: nothing restarts
     core.movie_end = settings_.movie.at_end;
@@ -512,7 +512,7 @@ auto App::set_mouse_captured(bool on) -> void {
     SDL_SetWindowRelativeMouseMode(game_.window(), on);
     mouse_captured_ = on;
     input_.take_mouse_motion();  // drop motion from before the capture
-    if (on) set_status("Mouse captured for the SNES Mouse: Esc releases it");
+    if (on) set_status("Mouse captured for the Mouse controller: Esc releases it");
 }
 
 // Pads to their console ports, then the mouse and the scope.

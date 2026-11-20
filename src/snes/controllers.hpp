@@ -20,7 +20,7 @@ inline constexpr std::array<DeviceInfo, 5> kDevices = {{
     {Device::None, "none", "Nothing"},
     {Device::Gamepad, "gamepad", "Gamepad"},
     {Device::Multitap, "multitap", "Multitap (4 pads)"},
-    {Device::Mouse, "mouse", "SNES Mouse"},
+    {Device::Mouse, "mouse", "Mouse"},
     {Device::SuperScope, "superscope", "Super Scope"},
 }};
 auto device_info(Device device) -> const DeviceInfo&;

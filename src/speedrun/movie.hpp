@@ -131,6 +131,17 @@ auto decode_movie(std::span<const uint8_t> data, Movie& movie) -> MovieResult;
 auto read_movie(const std::string& path, Movie& movie) -> std::string;
 auto write_movie(const std::string& path, const Movie& movie, size_t frames = SIZE_MAX) -> bool;
 
+// What differs between a movie and what is running, warned about before playback: a bit set.
+enum MovieMismatch : uint8_t { kMismatchRom = 1, kMismatchEmulator = 2 };
+auto movie_mismatch(const Movie& movie, uint32_t rom_crc32, const std::array<uint8_t, 20>& rom_sha1, std::string_view emulator)
+    -> uint8_t;
+// The warning for a mismatch (1..3): one dialog, whatever differs.
+struct MismatchPrompt {
+  const char* title;
+  const char* text;
+};
+auto mismatch_prompt(uint8_t mismatch) -> const MismatchPrompt&;
+
 // True when `part`'s frames are the start of `whole`'s.
 auto is_prefix(std::span<const FrameInput> part, std::span<const FrameInput> whole) -> bool;
 // Where a save state's movie goes: "states/Game.3.sst" -> "states/Game.3.bfm".

@@ -8,6 +8,7 @@
 
 #include "imgui.h"
 
+#include <array>
 #include <cstdio>
 #include <ctime>
 #include <filesystem>
@@ -23,8 +24,8 @@ constexpr SDL_DialogFileFilter kMovieFilters[] = {
     {"All files", "*"},
 };
 constexpr const char* kMoviesFolder = "movies";
-constexpr const char* kMoviePromptTitle = "Play a movie made with another ROM?";
-constexpr float kMoviePromptWidthEm = 30.f;
+constexpr const char* kMoviePromptId = "###movie_prompt";  // one popup, its title per mismatch
+constexpr float kMoviePromptWidthEm = 40.f;
 
 // How each mode looks: its badge (status bar, game window) and colour.
 struct MovieLook {
@@ -67,6 +68,8 @@ auto movie_tag(const EmuStatus& s) -> std::pair<std::string, uint32_t> {
 }
 
 }  // namespace
+
+auto App::running_version() -> std::string { return std::string(BITFORGE_TITLE) + " " + BITFORGE_VERSION; }
 
 auto App::apply_movie_settings() -> void {
     emu_thread_.post([m = settings_.movie](EmuThread::Core& c) {
@@ -183,15 +186,15 @@ auto App::record_movie(speedrun::MovieStart start, const std::string& path) -> v
     notify("Recording a movie " + std::string(speedrun::info(start).label) + ": " + fs::path(path).filename().string());
 }
 
-// Reads the file; a movie made with another ROM asks first.
+// Reads the file; a movie made with another ROM or emulator version asks first.
 auto App::open_movie(const std::string& path) -> void {
     speedrun::Movie movie;
     if (const std::string why = speedrun::read_movie(path, movie); !why.empty()) {
         notify("Can't play " + why);
         return;
     }
-    if (movie.rom_crc32 != status_.rom_crc32 || movie.rom_sha1 != status_.rom_sha1) {
-        movie_prompt_ = PendingMovie{std::move(movie), path};
+    if (const uint8_t mismatch = speedrun::movie_mismatch(movie, status_.rom_crc32, status_.rom_sha1, running_version()); mismatch != 0) {
+        movie_prompt_ = PendingMovie{std::move(movie), path, mismatch};
         return;
     }
     play_movie(std::move(movie), path);
@@ -226,21 +229,31 @@ auto App::watch_movie() -> void {
 
 auto App::draw_movie_prompt() -> void {
     if (!movie_prompt_) return;
-    if (!ImGui::IsPopupOpen(kMoviePromptTitle)) ImGui::OpenPopup(kMoviePromptTitle);
+    const speedrun::MismatchPrompt& prompt = speedrun::mismatch_prompt(movie_prompt_->mismatch);
+    const std::string title = std::string(prompt.title) + kMoviePromptId;
+    if (!ImGui::IsPopupOpen(kMoviePromptId)) ImGui::OpenPopup(title.c_str());
     ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * kMoviePromptWidthEm, 0.f));
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    if (!ImGui::BeginPopupModal(kMoviePromptTitle, nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+    if (!ImGui::BeginPopupModal(title.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
         movie_prompt_.reset();
         return;
     }
     const speedrun::Movie& m = movie_prompt_->movie;
     ImGui::PushTextWrapPos(0.f);
-    ImGui::TextUnformatted("This movie was recorded with a different ROM. It will most likely go out of sync.");
+    ImGui::TextUnformatted(prompt.text);
     ImGui::Spacing();
-    ImGui::Text("Movie:   %s", m.rom_file.c_str());
-    ImGui::Text("         CRC32 %08X  SHA-1 %s", m.rom_crc32, hex(m.rom_sha1).c_str());
-    ImGui::Text("Running: %s", status_.rom_name.c_str());
-    ImGui::Text("         CRC32 %08X  SHA-1 %s", status_.rom_crc32, hex(status_.rom_sha1).c_str());
+    if (movie_prompt_->mismatch & speedrun::kMismatchRom) {
+        ImGui::Text("Movie ROM:     %s", m.rom_file.c_str());
+        ImGui::Text("               CRC32 %08X", m.rom_crc32);
+        ImGui::Text("               SHA-1 %s", hex(m.rom_sha1).c_str());
+        ImGui::Text("Running ROM:   %s", status_.rom_name.c_str());
+        ImGui::Text("               CRC32 %08X", status_.rom_crc32);
+        ImGui::Text("               SHA-1 %s", hex(status_.rom_sha1).c_str());
+    }
+    if (movie_prompt_->mismatch & speedrun::kMismatchEmulator) {
+        ImGui::Text("Recorded with: %s", m.emulator.empty() ? "(unknown)" : m.emulator.c_str());
+        ImGui::Text("Running:       %s", running_version().c_str());
+    }
     ImGui::PopTextWrapPos();
     ImGui::Separator();
     bool close = false;

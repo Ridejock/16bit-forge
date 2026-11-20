@@ -60,6 +60,7 @@ auto RunTimer::clear_attempt() -> void {
   race_run_ = false;
   race_breaks_ = 0;
   replay_run_ = false;
+  counted_ = false;
 }
 
 auto RunTimer::event(Action action, int segment, bool automatic, uint64_t frame) -> Event {
@@ -78,7 +79,7 @@ auto RunTimer::start(const Clock& now) -> Event {
   started_unix_ = now.unix_seconds;
   race_run_ = race_;
   replay_run_ = replaying_;
-  mutate_run().attempt_count++;
+  if (!replay_run_) count_attempt(true);
   return event(Action::Start, 0);
 }
 
@@ -131,8 +132,10 @@ auto RunTimer::toggle_pause(const Clock& now) -> Event {
 auto RunTimer::reset(const Clock& now) -> Event {
   if (!active()) return {};
   const bool finished = state_ == TimerState::Ended;
-  if (improves(*run_, splits_, finished, method_)) pending_.push_back({splits_, finished});
-  record_attempt(now);
+  if (!replay_run_) {  // a replay is a movie's run, not the player's: no history, no PB or golds
+    if (improves(*run_, splits_, finished, method_)) pending_.push_back({splits_, finished});
+    record_attempt(now);
+  }
   clear_attempt();
   return event(Action::Reset, -1);
 }
@@ -159,6 +162,14 @@ auto RunTimer::record_attempt(const Clock& now) -> void {
     r.segments[i].history.push_back({a.id, minus(splits_[i], last)});
     last = splits_[i];
   }
+}
+
+// The run's attempt count goes up when a player's attempt starts, and back down if a movie
+// takes the attempt over.
+auto RunTimer::count_attempt(bool on) -> void {
+  if (counted_ == on) return;
+  mutate_run().attempt_count += on ? 1 : -1;
+  counted_ = on;
 }
 
 auto RunTimer::improves(const Run& run, const std::vector<Times>& splits, bool finished, Method m) -> bool {
@@ -227,7 +238,10 @@ auto RunTimer::on_frame(const FrameInfo& f, const ConditionTest& test) -> Event 
   replaying_ = f.replay;
   if (state_ == TimerState::Running || state_ == TimerState::Paused) {
     tamper_ |= f.tamper;
-    replay_run_ |= f.replay;
+    if (f.replay && !replay_run_) {
+      replay_run_ = true;
+      count_attempt(false);  // a movie took over this attempt
+    }
     if (race_run_ && (f.jump == Jump::Load || f.jump == Jump::Rewind)) race_breaks_ |= kBreakJump;
     if (race_run_ && !race_) race_breaks_ |= kBreakRaceOff;  // e.g. an undo after the finish, race mode off since
   }
@@ -316,11 +330,11 @@ auto RunTimer::is_gold(size_t i, Method m) const -> bool {
 }
 
 auto RunTimer::has_improvements() const -> bool {
-  return active() && improves(*run_, splits_, state_ == TimerState::Ended, method_);
+  return active() && !replay_run_ && improves(*run_, splits_, state_ == TimerState::Ended, method_);
 }
 
 auto RunTimer::finished_pb() const -> bool {
-  return state_ == TimerState::Ended && !splits_.empty() && beats(splits_.back().get(method_), pb_time(*run_, method_));
+  return state_ == TimerState::Ended && !replay_run_ && !splits_.empty() && beats(splits_.back().get(method_), pb_time(*run_, method_));
 }
 
 auto action_label(Action a) -> std::string_view { return kActionLabels[static_cast<size_t>(a)]; }
