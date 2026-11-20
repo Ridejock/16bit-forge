@@ -613,6 +613,7 @@ auto CPU65c816::cycles_for(const Opcode& entry) const -> int {
 
 auto CPU65c816::hardware_interrupt(Word native_vector, Word emulation_vector) -> int {
   bus.read(bank_addr(pbr, pc));  // the opcode fetch it replaces
+  bus.after_opcode_fetch(bank_addr(pbr, pc), true);
   interrupt(native_vector, emulation_vector, false);
   irq_masked = true;
   return emulation ? kInterruptCycles - 1 : kInterruptCycles;
@@ -635,6 +636,7 @@ auto CPU65c816::step() -> int {
   CPU_TRACE("%02X:%04X  A:%04X X:%04X Y:%04X S:%04X D:%04X DB:%02X P:%02X%s", pbr, pc, a, x, y, sp, d, dbr, p,
             emulation ? " E" : "");
   const Opcode& entry = kOpcodes[fetch8()];
+  bus.after_opcode_fetch(bank_addr(pbr, pc), entry.mode == Imp || entry.mode == Acc);
   extra_cycles = 0;
   const int cycles = cycles_for(entry);
   full_stack = uses_full_stack(entry.op, entry.mode);

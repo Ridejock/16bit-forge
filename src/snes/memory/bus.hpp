@@ -78,6 +78,8 @@ public:
 
   auto write_dma_register(Byte channel, Byte reg, Byte value) -> void;
   auto read_dma_register(Byte channel, Byte reg) const -> Byte;
+  // $420B. Written by an instruction, the transfer starts after the CPU's next opcode fetch
+  // (see after_opcode_fetch()); written from outside one (tests, tools), it runs at once.
   auto trigger_dma(Byte mdmaen_value) -> void;
   auto dma_channel(int index) const -> const DMAChannel& { return dma_channels[static_cast<size_t>(index)]; }
 
@@ -101,7 +103,7 @@ public:
   // the H/V IRQ. An event at clock t happens in the run with from < t <= to.
   auto on_clock(int v, int from, int to) -> void;
   auto hdma_init() -> void;       // line 0: reload every enabled channel's table
-  auto hdma_run_line() -> void;   // H-blank of lines 0..224 (or 239)
+  auto hdma_run_line() -> void;   // dot 278 of lines 0..224 (or 239)
 
   // Whether the game has read a controller ($4016/$4017, $4218-$421F) since the last clear: a
   // frame without such a read is a lag frame.
@@ -117,6 +119,8 @@ public:
   auto irq_pending() const -> bool override { return ((timeup & 0x80) != 0 && !irq_late) || cartridge->irq(); }
   // WAI ends kWaiExitClocks after the interrupt line went low; charged here, from that moment.
   auto end_wait() -> int override;
+  // Runs a GP-DMA the last instruction started: the next cycle's speed sets where the CPU resumes.
+  auto after_opcode_fetch(Address next, bool io) -> void override;
 
   // Controller ports 0 and 1 (the console's 1 and 2). A pad word is what auto-read leaves in
   // $4218/$4219 for a gamepad: B Y Sel Start U D L R A X L R 0 0 0 0. Port 1 starts with a
@@ -210,6 +214,7 @@ private:
   int last_access_clocks = 0;  // the latest CPU access of this instruction
   int last_cycle_clocks = 0;   // the final cycle of the last instruction
   bool irq_late = false;       // the timer IRQ rose in that final cycle
+  Byte dma_request = 0;        // $420B channels waiting for the CPU's next opcode fetch
   
   enum class MemoryRegion {
     WRAM,
@@ -239,6 +244,7 @@ private:
   auto timer_point(int v, bool next) const -> int;            // where the H/V timer fires in line v, or -1
   auto timer_hits(int v, int from, int to, bool next = false) const -> bool;  // ... in (from, to]
   auto timer_fires_within(uint64_t clocks) const -> bool;
+  auto run_dma(Byte channels, int resume_clocks) -> void;
   auto hdma_reload(DMAChannel& ch) -> void;
   auto dma_transfer_unit(DMAChannel& ch, Address a_addr, int index) -> void;
 };

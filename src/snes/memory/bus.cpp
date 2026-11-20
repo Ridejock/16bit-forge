@@ -266,6 +266,7 @@ auto Bus::reset() -> void {
   bus_clock = nmi_edge = irq_edge = 0;
   last_access_clocks = last_cycle_clocks = 0;
   irq_late = false;
+  dma_request = 0;
   rdnmi_read_early = false;
   timeup_read_early = false;
   input_read_ = false;
@@ -478,6 +479,13 @@ auto Bus::end_wait() -> int {
   return 0;
 }
 
+auto Bus::after_opcode_fetch(Address next, bool io) -> void {
+  if (dma_request == 0) return;
+  const Byte channels = dma_request;
+  dma_request = 0;
+  run_dma(channels, io ? kInternalCycleClocks : access_clocks(next));
+}
+
 auto Bus::on_vblank_end() -> void {
   vblank_active = false;
   rdnmi &= 0x7F;
@@ -546,6 +554,8 @@ auto Bus::serialize(Archive& ar) -> void {
     bus_clock = nmi_edge = irq_edge = 0;
     last_cycle_clocks = 0;
   }
+  if (ar.at_least(7)) ar(dma_request);
+  else if (ar.loading()) dma_request = 0;  // version 6 ran a GP-DMA at the $420B write
 }
 
 auto Bus::read_cpu_io(Word offset) -> Byte {

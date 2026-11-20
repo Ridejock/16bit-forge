@@ -83,7 +83,8 @@ public:
     static constexpr int kMaxHeight = kOverscanHeight * 2;  // interlace + overscan
     static constexpr int kClocksPerLine = timing::kLineClocks;      // 1364, but see line_clocks()
     static constexpr int kLinesPerFrame = timing::kLinesPerFrame;  // 262, +1 on interlaced even fields
-    static constexpr int kHblankClock = 274 * 4;     // dot 274: H-blank starts, line is drawn, HDMA
+    static constexpr int kHblankClock = 274 * 4;     // dot 274: H-blank starts, line is drawn
+    static constexpr int kHdmaClock = 278 * 4;       // dot 278: HDMA line transfers (Anomie, fullsnes)
     static constexpr int kHdmaInitClock = 6 * 4;     // dot 6 of line 0: HDMA tables reload
     static constexpr int kFirstPixelDot = 22;        // dot that outputs pixel 0
 

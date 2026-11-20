@@ -323,11 +323,14 @@ auto refresh_clocks() -> double {
   return static_cast<double>(memory::dram_refresh_stall(0, start));
 }
 
-// One GP-DMA of `bytes` bytes on each of `channels` channels, WRAM to VRAM, in master clocks
-// (less the CPU's write to $420B). Run mid-line, clear of the refresh.
-auto dma_clocks(int channels, int bytes) -> int64_t {
-  Rig r;
-  r.run_to(10, 600);
+// One GP-DMA of `bytes` bytes on each of `channels` channels, WRAM to VRAM, started by
+// "LDA #mask : STA $420B" from slow ROM and followed by `next` (NOP: an internal cycle after its
+// fetch; LDA #imm: an 8-clock operand read). Master clocks the CPU is paused: the two
+// instructions less their own cycles. The pause starts `phase` clocks later than the base case.
+// Run mid-line, clear of the refresh.
+auto dma_clocks(int channels, int bytes, int phase = 0, Byte next = 0xEA) -> int64_t {
+  const auto mask = static_cast<Byte>((1 << channels) - 1);
+  CpuRig r({0xA9, mask, 0x8D, 0x0B, 0x42, next, 0x00});
   for (int ch = 0; ch < channels; ch++) {
     const Address base = 0x4300 + static_cast<Address>(ch) * 0x10;
     r.write(base + 0, 0x01);  // A to B, two registers
@@ -338,16 +341,29 @@ auto dma_clocks(int channels, int bytes) -> int64_t {
     r.write(base + 5, static_cast<Byte>(bytes & 0xFF));
     r.write(base + 6, static_cast<Byte>(bytes >> 8));
   }
-  r.charged();
-  r.bus.begin_cpu_step();
-  r.bus.write(0x00420B, static_cast<Byte>((1 << channels) - 1));
-  const auto total = static_cast<int64_t>(r.bus.end_cpu_step(1));
-  return total - r.bus.access_clocks(0x00420B);
+  r.run_to(10, 600 + phase);
+  r.step();  // LDA #mask
+  const int64_t clocks = r.step() + r.step();  // STA $420B, then `next`, with the DMA in between
+  const int64_t own = 3 * 8 + 6 + (next == 0xEA ? 8 + 6 : 8 + 8);  // their own cycles
+  return clocks - own;
 }
 
-auto dma_byte() -> double { return static_cast<double>(dma_clocks(1, 32) - dma_clocks(1, 16)) / 16.0; }
-auto dma_channel() -> double { return static_cast<double>(dma_clocks(2, 16) - dma_clocks(1, 16) - 16 * 8); }
+// Bytes and channels in steps of 24 clocks, so the alignment (to 8 and to 6) is the same.
+auto dma_byte() -> double { return static_cast<double>(dma_clocks(1, 40) - dma_clocks(1, 16)) / 24.0; }
+auto dma_channel() -> double { return static_cast<double>(dma_clocks(2, 2) - dma_clocks(1, 2) - 2 * 8); }
 auto dma_overhead() -> double { return static_cast<double>(dma_clocks(1, 16) - 16 * 8 - 8); }
+// Anomie's example, "STA $420B : NOP" with one channel of 3 bytes: 48 clocks when the pause
+// starts 2, 4 or 6 clocks before a multiple of 8, 54 when it starts on one. Over four phases
+// 2 clocks apart: the shortest and the longest.
+auto dma_example(bool longest, Byte next) -> double {
+  int64_t lo = dma_clocks(1, 3, 0, next), hi = lo;
+  for (int phase = 2; phase < 8; phase += 2) {
+    const int64_t n = dma_clocks(1, 3, phase, next);
+    lo = std::min(lo, n);
+    hi = std::max(hi, n);
+  }
+  return static_cast<double>(longest ? hi : lo);
+}
 
 // HDMA channel 0 in mode 0 ($2132), from a table at $7E:1000: 127 lines, one byte on the first.
 auto hdma_rig(Rig& r, bool indirect) -> void {
@@ -405,7 +421,7 @@ struct Spec {
 };
 
 // clang-format off
-const std::array<Spec, 41> kSpecs = {{
+const std::array<Spec, 44> kSpecs = {{
     {{"line_clocks", "Line length", "clocks", 1364, 1364, 0, Source::Wiki, {}}, normal_line},
     {{"short_line_clocks", "Short line (V=240, field 1, interlace off)", "clocks", 1360, 1360, 0, Source::Wiki, {}}, short_line},
     {{"frame_clocks_0", "Frame, field 0 (262 lines)", "clocks", 357368, 357368, 0, Source::Derived, {}}, [] { return frame_clocks(0); }},
@@ -447,14 +463,19 @@ const std::array<Spec, 41> kSpecs = {{
     {{"refresh_clocks", "WRAM refresh length", "clocks", 40, 40, 0, Source::Wiki, {}}, refresh_clocks},
     {{"dma_byte_clocks", "DMA per byte", "clocks", 8, 8, 0, Source::Anomie, {}}, dma_byte},
     {{"dma_channel_clocks", "DMA per channel", "clocks", 8, 8, 0, Source::Anomie, {}}, dma_channel},
-    {{"dma_overhead_clocks", "DMA per transfer (start, alignment, resume)", "clocks", 12, 24, 4, Source::Anomie,
-      "8 flat; hardware adds 2-8 to align to 8 clocks and 2-8 to resync with the CPU clock"}, dma_overhead},
+    {{"dma_overhead_clocks", "DMA per transfer (start, alignment, resume)", "clocks", 12, 24, 0, Source::Anomie, {}}, dma_overhead},
+    {{"dma_example_short_clocks", "DMA, 3 bytes then NOP: pause off a multiple of 8", "clocks", 48, 48, 0, Source::Anomie, {}},
+     [] { return dma_example(false, 0xEA); }},
+    {{"dma_example_long_clocks", "DMA, 3 bytes then NOP: pause on a multiple of 8", "clocks", 54, 54, 0, Source::Anomie, {}},
+     [] { return dma_example(true, 0xEA); }},
+    {{"dma_resume_slow_clocks", "DMA, 3 bytes then LDA #imm (8-clock read): longest", "clocks", 56, 56, 0, Source::Derived, {}},
+     [] { return dma_example(true, 0xA9); }},
     {{"hdma_init_direct_clocks", "HDMA table reload, one direct channel", "clocks", 26, 26, 0, Source::Anomie, {}}, hdma_init_direct},
     {{"hdma_init_indirect_clocks", "HDMA table reload, one indirect channel", "clocks", 42, 42, 0, Source::Anomie, {}}, hdma_init_indirect},
     {{"hdma_line_clocks", "HDMA line, one channel, one byte", "clocks", 34, 34, 0, Source::Anomie, {}}, hdma_line_transfer},
     {{"hdma_line_idle_clocks", "HDMA line, one channel, no transfer", "clocks", 26, 26, 0, Source::Anomie, {}}, hdma_line_idle},
-    {{"hdma_line_start", "HDMA line transfer starts, clocks into the line", "clocks", 1112, 1112, 16, Source::Anomie,
-      "runs at dot 274 (the H-blank flag); hardware starts it at dot 278"}, hdma_line_clock},
+    {{"hdma_line_start", "HDMA line transfer starts, clocks into the line", "clocks", 1112, 1112, 0, Source::Anomie, {}},
+     hdma_line_clock},
     {{"access_wram_clocks", "CPU access: WRAM", "clocks", 8, 8, 0, Source::Wiki, {}}, [] { return access(0x7E0000, 0); }},
     {{"access_slowrom_clocks", "CPU access: ROM, MEMSEL off", "clocks", 8, 8, 0, Source::Wiki, {}}, [] { return access(0x808000, 0); }},
     {{"access_fastrom_clocks", "CPU access: ROM at $80:8000+, MEMSEL on", "clocks", 6, 6, 0, Source::Wiki, {}}, [] { return access(0x808000, 1); }},

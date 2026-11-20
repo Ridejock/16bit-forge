@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Timing: the core against documented NTSC hardware timing (debug/timing_check.hpp): line and
 // frame lengths with the short line, interlace, the frame rate, NMI and IRQ (trigger points, long
-// dots, CPU latency, WAI exit), auto-joypad, refresh, DMA and HDMA; the PPU's look-ahead (clocks_until_line) against stepping through the short
+// dots, CPU latency, WAI exit), auto-joypad, refresh, DMA (alignment, resume) and HDMA; the PPU's look-ahead (clocks_until_line) against stepping through the short
 // line; game time against the exact frame period, whatever the wall clock does; the lag frame
 // counter in the core, the emulator (rewind, reset, movie replay) and the run timer; and the
 // timing report. Headless, on built-in programs.
@@ -20,6 +20,7 @@
 #include "speedrun/splits.hpp"
 #include "utils/logging.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -64,7 +65,9 @@ auto test_documented() -> void {
                             "access_slowrom_clocks", "access_fastrom_clocks", "access_io_clocks", "access_joyser_clocks",
                             "nmi_clock", "virq_clock", "virq_after_short_clock", "hirq_clock", "hirq_long_dots_clock",
                             "irq_sequence_clocks", "irq_sequence_emu_clocks", "wai_exit_clocks", "cli_irq_instructions",
-                            "irq_early_instructions", "irq_late_instructions", "nmi_late_instructions"}) {
+                            "irq_early_instructions", "irq_late_instructions", "nmi_late_instructions",
+                            "dma_overhead_clocks", "dma_example_short_clocks", "dma_example_long_clocks",
+                            "dma_resume_slow_clocks", "hdma_line_start"}) {
         const debug::TimingCheck* c = find(checks, key);
         CHECK(c != nullptr);
         if (c && c->verdict() != debug::Verdict::Exact) {
@@ -74,7 +77,8 @@ auto test_documented() -> void {
     }
     // The one interrupt gap left: the NMI hold (see memory::Bus::nmi_fresh), one instruction.
     if (const debug::TimingCheck* c = find(checks, "nmi_early_instructions")) CHECK(c->measured == 1 && c->verdict() == debug::Verdict::Close);
-    // The known gaps say why.
+    // The known gaps say why. The NMI hold is the only one left.
+    CHECK(std::count_if(checks.begin(), checks.end(), [](const auto& c) { return c.verdict() == debug::Verdict::Close; }) == 1);
     for (const auto& c : checks) {
         if (c.verdict() == debug::Verdict::Close) CHECK(!c.note.empty());
         if (c.verdict() == debug::Verdict::Off) std::printf("\n    OFF: %.*s", static_cast<int>(c.key.size()), c.key.data());
@@ -320,8 +324,13 @@ auto test_report() -> void {
     const frontend::TimingReport checks_only = frontend::make_timing_report({"16bit Forge test", "", 0, dir.string()});
     CHECK(checks_only.ok);
     CHECK(checks_only.text.find("Result:") != std::string::npos && checks_only.text.find("SNES") == std::string::npos);
+    // Another report's work folder (the old fixed name) is left alone: each run makes its own.
+    fs::create_directories(dir / "16bitforge_timing");
+    std::ofstream(dir / "16bitforge_timing" / "other.bfm") << "busy";
     const frontend::TimingReport game = frontend::make_timing_report({"16bit Forge test", write_probe(dir / "probe.sfc", 1), 240, dir.string()});
     CHECK(game.ok);
+    CHECK(fs::exists(dir / "16bitforge_timing" / "other.bfm"));
+    CHECK(std::distance(fs::directory_iterator(dir), fs::directory_iterator{}) == 2);  // its own folder is gone
     CHECK(game.text.find("Lag frames:        120") != std::string::npos);
     CHECK(game.text.find("DIFFERENT") == std::string::npos);
     if (!game.ok) std::printf("\n%s", game.text.c_str());

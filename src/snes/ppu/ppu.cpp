@@ -309,8 +309,9 @@ auto PPU::step(uint32_t master_clocks) -> bool {
     bool frame_done = false;
 
     while (master_clocks > 0) {
-        // Run to the next event on this line: HDMA init (line 0), H-blank, or the end of the line.
+        // Run to the next event on this line: HDMA init (line 0), H-blank, HDMA, or the line's end.
         int event = line_clocks(current_scanline);
+        if (line_clock < kHdmaClock) event = kHdmaClock;
         if (line_clock < kHblankClock) event = kHblankClock;
         if (current_scanline == 0 && line_clock < kHdmaInitClock) event = kHdmaInitClock;
 
@@ -324,6 +325,7 @@ auto PPU::step(uint32_t master_clocks) -> bool {
             if (bus) bus->hdma_init();
         } else if (event == kHblankClock) {
             flush_line(WIDTH);
+        } else if (event == kHdmaClock) {
             if (bus && current_scanline < vblank_line()) bus->hdma_run_line();
         } else {
             line_clock = 0;
@@ -376,8 +378,8 @@ auto PPU::hdma_timing(uint64_t ahead) const -> HdmaTiming {
         if (line == 0 && clock < kHdmaInitClock && timing.init == kNever) {
             timing.init = distance + (kHdmaInitClock - clock);
         }
-        if (line < vblank_line() && clock < kHblankClock && timing.run == kNever) {
-            timing.run = distance + (kHblankClock - clock);
+        if (line < vblank_line() && clock < kHdmaClock && timing.run == kNever) {
+            timing.run = distance + (kHdmaClock - clock);
         }
         distance += static_cast<uint64_t>(line_clocks(line, next)) - clock;
         clock = 0;

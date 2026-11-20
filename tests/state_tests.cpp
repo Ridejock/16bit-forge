@@ -477,7 +477,7 @@ auto test_thumbnails() -> void {
         CHECK(boot(fresh, rom));
         CHECK(bitforge::savestate::decode(fresh, older, read) == bitforge::savestate::Result::Ok);
         CHECK(fresh.controller(1).device() == bitforge::Device::Gamepad && fresh.controller(1).pad(0) == 0x8421);
-        CHECK(fresh.save_state(v) == sys.save_state(v));  // older layouts lack the newer fields (6: interrupt edges)
+        CHECK(fresh.save_state(v) == sys.save_state(v));  // older layouts lack the newer fields (6: interrupt edges, 7: a waiting GP-DMA)
     }
     // A multitap needs the current format; the older one keeps what it can (a gamepad).
     sys.set_port_device(1, bitforge::Device::Multitap);

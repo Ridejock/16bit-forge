@@ -18,6 +18,9 @@ public:
   // WAI is ending on an interrupt. Returns the CPU cycles that takes; a bus that times the exit
   // itself (the S-CPU's, from the moment the line went low) charges it and returns 0.
   virtual auto end_wait() -> int { return 0; }
+  // The CPU fetched an opcode (or the one an interrupt sequence replaces). Its next cycle reads
+  // `next`, or is internal if `io`. The S-CPU's bus starts a pending GP-DMA here.
+  virtual auto after_opcode_fetch(Address /*next*/, bool /*io*/) -> void {}
   // Interrupt and reset vectors (bank 0). The SA-1 replaces them with its CRV/CNV/CIV
   // registers; everyone else reads the two bytes from memory.
   virtual auto read_vector(Word address) -> Word {

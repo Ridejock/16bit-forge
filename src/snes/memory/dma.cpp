@@ -28,9 +28,10 @@ constexpr std::array<TransferMode, 8> kTransferModes = {{
     {4, {0, 0, 1, 1}},  // 7: same as 3
 }};
 
-// Master clocks. GP-DMA: 8 to start, 8 per channel, 8 per byte. HDMA: 18 at the table reload
+// Master clocks. GP-DMA: 8 to start, 8 per channel, 8 per byte, aligned to 8 (see run_dma()). HDMA: 18 at the table reload
 // and per line with any channel active, 8 per channel, 16 more per indirect address load, 8 per
 // byte.
+constexpr uint64_t kDmaAlignClocks = 8;
 constexpr uint64_t kDmaStartClocks = 8;
 constexpr uint64_t kDmaChannelClocks = 8;
 constexpr uint64_t kDmaByteClocks = 8;
@@ -101,7 +102,21 @@ auto Bus::dma_transfer_unit(DMAChannel& ch, Address a_addr, int index) -> void {
 
 auto Bus::trigger_dma(Byte mdmaen_value) -> void {
     if (mdmaen_value == 0) return;
+    if (in_cpu_step && !dma_active) {
+        dma_request = static_cast<Byte>(dma_request | mdmaen_value);
+        return;
+    }
+    run_dma(mdmaen_value, 0);
+}
+
+// After the pause, wait for a multiple of 8 master clocks since reset (2-8, never 0), run the
+// transfer, then wait for a whole number of the next CPU cycle's clocks since the pause (2-8)
+// before the CPU resumes (Anomie): 12-24 clocks of overhead in all. resume_clocks 0: no CPU
+// cycle follows (a write from outside an instruction), so no resync.
+auto Bus::run_dma(Byte channels, int resume_clocks) -> void {
     dma_active = true;
+    const uint64_t pause = pending_clocks;
+    pending_clocks += kDmaAlignClocks - (bus_clock + pending_clocks) % kDmaAlignClocks;
     // HDMA cuts into a running GP-DMA, and its table reload (line 0) or line transfer stops the
     // GP-DMA of every channel it uses. The transfer below runs in one go, so work out where
     // those points fall.
@@ -110,7 +125,7 @@ auto Bus::trigger_dma(Byte mdmaen_value) -> void {
                                                       : ppu::PPU::HdmaTiming{UINT64_MAX, UINT64_MAX};
     pending_clocks += kDmaStartClocks;
     for (int i = 0; i < 8; i++) {
-        if (!(mdmaen_value & (1 << i))) continue;
+        if (!(channels & (1 << i))) continue;
         auto& ch = dma_channels[static_cast<size_t>(i)];
         uint64_t stop_at = UINT64_MAX;
         if (hdmaen & (1 << i)) stop_at = start + std::min(hdma.init, ch.hdma_terminated ? UINT64_MAX : hdma.run);
@@ -126,6 +141,10 @@ auto Bus::trigger_dma(Byte mdmaen_value) -> void {
             ch.a1t = static_cast<Word>(ch.a1t + step);
             ch.das = static_cast<Word>(ch.das - 1);
         } while (ch.das != 0);
+    }
+    if (resume_clocks > 0) {
+        const auto cycle = static_cast<uint64_t>(resume_clocks);
+        pending_clocks += cycle - (pending_clocks - pause) % cycle;
     }
     dma_active = false;
 }

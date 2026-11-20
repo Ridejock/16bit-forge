@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <ctime>
 #include <filesystem>
+#include <random>
 #include <span>
 #include <string>
 #include <vector>
@@ -106,12 +107,40 @@ auto line(std::string& out, const char* fmt, ...) -> void {
 
 auto same(bool ok) -> const char* { return ok ? "same" : "DIFFERENT"; }
 
+// A new folder under `base` for one run's files, so two reports at once don't share one; removed
+// when this goes (after the emulators in it have closed their files). Empty if none was made.
+struct WorkDir {
+  fs::path path;
+  explicit WorkDir(const fs::path& base) {
+    std::error_code ec;
+    fs::create_directories(base, ec);
+    std::random_device random;
+    for (int attempt = 0; attempt < 100 && path.empty(); attempt++) {
+      char name[40];
+      std::snprintf(name, sizeof(name), "16bitforge_timing_%08x", random());
+      const fs::path candidate = base / name;
+      if (fs::create_directory(candidate, ec)) path = candidate;
+      else if (ec) break;
+    }
+  }
+  ~WorkDir() {
+    std::error_code ec;
+    if (!path.empty()) fs::remove_all(path, ec);
+  }
+  WorkDir(const WorkDir&) = delete;
+  auto operator=(const WorkDir&) -> WorkDir& = delete;
+};
+
 // The game section; false if a replay differed or the game wouldn't run.
 auto game_section(const TimingReportOptions& o, std::string& out) -> bool {
-  const fs::path dir = (o.work_dir.empty() ? fs::temp_directory_path() : fs::path(o.work_dir)) / "16bitforge_timing";
   std::error_code ec;
-  fs::remove_all(dir, ec);
-  fs::create_directories(dir, ec);
+  const fs::path base = o.work_dir.empty() ? fs::temp_directory_path(ec) : fs::path(o.work_dir);
+  const WorkDir work(base);
+  if (work.path.empty()) {
+    line(out, "Could not make a work folder under %s", base.string().c_str());
+    return false;
+  }
+  const fs::path& dir = work.path;
   const uint64_t n = o.frames;
   const uint64_t half = n / 2;
   bool ok = true;
@@ -176,7 +205,6 @@ auto game_section(const TimingReportOptions& o, std::string& out) -> bool {
       ok = false;
     }
   }
-  fs::remove_all(dir, ec);
 
   const double seconds = static_cast<double>(speedrun::frames_to_nanos(static_cast<int64_t>(first.frames), speedrun::VideoStandard::Ntsc)) / 1e9;
   const double clocks_per_frame = first.frames ? static_cast<double>(first.clocks) / static_cast<double>(first.frames) : 0.0;

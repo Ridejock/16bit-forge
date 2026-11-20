@@ -4,6 +4,8 @@
 #include "snes/memory/bus.hpp"
 #include "snes/ppu/ppu.hpp"
 #include "utils/logging.hpp"
+#include <algorithm>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -64,6 +66,7 @@ static int test_asl_lsr();
 static int test_ppu_register_bus();
 static int test_cpu_io_math();
 static int test_nmi_taken();
+static int test_dma_waits_for_fetch();
 static int test_nmi_disabled();
 static int test_vblank_ends();
 static int test_vram_port();
@@ -129,6 +132,7 @@ int main() {
     run_test("CPU I/O multiply/divide", test_cpu_io_math);
     run_test("NMI taken", test_nmi_taken);
     run_test("NMI disabled", test_nmi_disabled);
+    run_test("GP-DMA after the next opcode fetch", test_dma_waits_for_fetch);
     run_test("Vblank ends", test_vblank_ends);
     run_test("VRAM port", test_vram_port);
     run_test("BG sampler rows", test_bg_sampler_rows);
@@ -158,6 +162,50 @@ int main() {
     
     printf("\n=== Results: %d passed, %d failed ===\n", passed, failed);
     return failed > 0 ? 1 : 0;
+}
+
+// STA $420B inside an instruction: the CPU still fetches the next opcode, then the transfer runs
+// (Anomie). One byte from ROM to the WRAM port, then NOP: 24 clocks of transfer, 2-8 to align to
+// 8 before it and 2-6 to resume on the NOP's 6-clock internal cycle after it.
+static int test_dma_waits_for_fetch() {
+    TestHarness h;
+    std::vector<bitforge::Byte> code(0x101, 0xEA);
+    const std::vector<bitforge::Byte> start = {0xA9, 0x01, 0x8D, 0x0B, 0x42};  // LDA #$01, STA $420B
+    std::copy(start.begin(), start.end(), code.begin());
+    code[0x100] = 0x5A;
+    h.load_test_rom(0x8000, code, 0x8000);
+    h.bus.poke_wram(0x2000, 0x00);
+    h.bus.write(0x002181, 0x00);
+    h.bus.write(0x002182, 0x20);
+    h.bus.write(0x002183, 0x00);
+    h.bus.write(0x004300, 0x00);
+    h.bus.write(0x004301, 0x80);  // $2180
+    h.bus.write(0x004302, 0x00);
+    h.bus.write(0x004303, 0x81);
+    h.bus.write(0x004304, 0x00);
+    h.bus.write(0x004305, 0x01);
+    h.bus.write(0x004306, 0x00);
+    auto step = [&] {
+        h.bus.begin_cpu_step();
+        const int cycles = h.cpu.step();
+        return h.bus.end_cpu_step(cycles);
+    };
+    step();
+    step();
+    if (h.bus.peek_wram(0x2000) != 0x00) {
+        printf("DMA ran before the next opcode fetch");
+        return 1;
+    }
+    const uint64_t nop = step();
+    if (h.bus.peek_wram(0x2000) != 0x5A) {
+        printf("DMA didn't run after the fetch");
+        return 1;
+    }
+    if (nop < 14 + 24 + 4 || nop > 14 + 24 + 14) {
+        printf("NOP with the DMA: %llu clocks", static_cast<unsigned long long>(nop));
+        return 1;
+    }
+    return 0;
 }
 
 // Test: LDA #$42 -> Store to $7E0200 -> Expect 0x42

@@ -2653,7 +2653,7 @@ auto test_machine_spc7110() -> bool {
 }
 
 auto test_state_version() -> bool {
-  CHECK_EQ(savestate::kVersion, 6u);
+  CHECK_EQ(savestate::kVersion, 7u);
   return true;
 }
 
