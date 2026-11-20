@@ -186,6 +186,9 @@ auto Settings::load(const std::string& path) -> void {
             } else if (key == "show") {
                 show_timer = parse_bool(value);
             }
+        } else if (section == "race") {
+            if (key == "enabled") race.enabled = parse_bool(value);
+            if (key == "verification_file") race.write_verification = parse_bool(value);
         } else if (section == "keys") {
             for (size_t i = 0; i < kPadButtons.size(); i++) {
                 if (key != kPadButtons[i].name) continue;
@@ -242,6 +245,10 @@ auto Settings::save(const std::string& path) const -> bool {
         << "overlay=" << (timer.overlay ? 1 : 0) << "\n"
         << "corner=" << info(timer.corner).id << "\n"
         << "show=" << (show_timer ? 1 : 0) << "\n\n";
+
+    out << "[race]\n"
+        << "enabled=" << (race.enabled ? 1 : 0) << "\n"
+        << "verification_file=" << (race.write_verification ? 1 : 0) << "\n\n";
 
     out << "[recent]\n";
     for (size_t i = 0; i < recent_roms.size(); i++) {

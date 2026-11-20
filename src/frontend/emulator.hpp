@@ -47,12 +47,24 @@ public:
     auto last_warning() const -> const std::string& { return last_warning_; }
     auto unload() -> void;
     auto reset() -> void;
+    // Power off and on: the ROM boots again from its file (fresh memory, the battery save as on
+    // disk, watches unfrozen, no hand edits). False if it can't be loaded any more.
+    auto power_cycle() -> bool;
+
+    // ---- Race mode (speedrun/race.hpp) ----------------------------------------------------
+    // Turning it on power-cycles the game. While on, cheats aren't applied (the list and its
+    // file stay), freezes are dropped, and memory edits, state loads and saves, timeline saves
+    // and snapshot loads (rewind) are refused, whatever asks. Turning it off applies the
+    // cheats again.
+    auto set_race(bool on) -> void;
+    auto race() const -> bool { return race_; }
     auto run_frame() -> void;
 
     auto loaded() const -> bool { return system_ != nullptr; }
     auto rom_path() const -> const std::string& { return rom_path_; }
     auto rom_name() const -> const std::string& { return rom_name_; }
     auto rom_stem() const -> std::string;  // the ROM's file name without its extension
+    auto rom_crc32() const -> uint32_t;    // of the ROM as loaded (no copier header); 0 without one
     auto frame_count() const -> uint64_t { return frames_; }
     // What last moved frame_count() other than a frame (a reset, a state load, a rewind or
     // timeline jump), cleared by the call: the run timer keeps game time and auto-splits right.
@@ -158,6 +170,7 @@ private:
     auto load_sram() -> void;
     auto load_cheats() -> void;
     auto load_watches() -> void;
+    auto apply_cheats() -> void;  // the enabled entries to the core, unless race mode is on
     auto apply_freezes() -> void;
     auto region_memory() -> debug::RegionMemory;
     auto sample_watches() -> void;
@@ -168,6 +181,7 @@ private:
     std::vector<debug::WatchReading> readings_;       // this frame's
     std::vector<debug::WatchReading> last_readings_;  // last frame's (kept to reuse its storage)
     bool poked_ = false;                              // a hand edit since the game loaded
+    bool race_ = false;
     uint64_t watches_revision_ = 0;
     speedrun::Jump jump_ = speedrun::Jump::None;
     std::string data_dir_;

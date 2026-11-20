@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "frontend/memory_panel.hpp"
 
+#include "speedrun/race.hpp"
 #include "utils/logging.hpp"
 
 #include "imgui.h"
@@ -95,6 +96,7 @@ auto MemoryPanel::draw(const EmuStatus& status, const AddCheat& add_cheat, const
         return;
     }
     sync_game(status);
+    status_race_ = status.race;
     emu_.take_memory();
     const MemoryImage& memory = emu_.memory();
     if (memory.rom_path != rom_) {
@@ -300,7 +302,12 @@ auto MemoryPanel::draw_watches(const MemoryImage& memory, const AddCheat& add_ch
             } else if (edit_row_ == row) {
                 edit_row_ = -1;
             }
-            if (entered) {
+            if (status_race_ && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+                ImGui::SetTooltip("%s", speedrun::blocked_tooltip(speedrun::Guard::MemoryEdit).c_str());
+            }
+            if (entered && status_race_) {
+                notify(speedrun::blocked_message(speedrun::Guard::MemoryEdit));
+            } else if (entered) {
                 if (const auto value = debug::parse_value(field.data(), w.type)) {
                     emu_.post([region = w.region, offset = w.offset, size = w.type.size, v = *value](EmuThread::Core& c) {
                         c.emu.write_memory(region, offset, size, v);
@@ -317,15 +324,18 @@ auto MemoryPanel::draw_watches(const MemoryImage& memory, const AddCheat& add_ch
             }
 
             ImGui::TableNextColumn();
+            ImGui::BeginDisabled(status_race_);
             if (ImGui::Checkbox("##freeze", &w.frozen)) {
                 if (w.frozen) w.value = live.value_or(0);
                 changed = true;
             }
-            ImGui::SetItemTooltip("Write this value back every frame.");
+            ImGui::EndDisabled();
+            ImGui::SetItemTooltip("%s", status_race_ ? speedrun::blocked_tooltip(speedrun::Guard::Freeze).c_str()
+                                                     : "Write this value back every frame.");
 
             ImGui::TableNextColumn();
             const bool cheatable = debug::info(w.region).cheatable;
-            ImGui::BeginDisabled(!cheatable || !live);
+            ImGui::BeginDisabled(!cheatable || !live || status_race_);
             if (ImGui::SmallButton("Cheat")) {
                 const uint32_t value = w.frozen ? w.value : live.value_or(0);
                 if (auto entry = debug::watch_to_cheat(w, value)) {
@@ -336,8 +346,9 @@ auto MemoryPanel::draw_watches(const MemoryImage& memory, const AddCheat& add_ch
                 }
             }
             ImGui::EndDisabled();
-            ImGui::SetItemTooltip(cheatable ? "Add the value as an always-on Pro Action Replay code in Cheats."
-                                            : "Cheat codes can only hold WRAM values.");
+            if (status_race_) ImGui::SetItemTooltip("%s", speedrun::blocked_tooltip(speedrun::Guard::Cheats).c_str());
+            else ImGui::SetItemTooltip(cheatable ? "Add the value as an always-on Pro Action Replay code in Cheats."
+                                                 : "Cheat codes can only hold WRAM values.");
             ImGui::SameLine();
             if (ImGui::SmallButton("Delete")) remove = row;
             ImGui::PopID();

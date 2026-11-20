@@ -2,6 +2,7 @@
 #include "frontend/app.hpp"
 #include "frontend/app_icon.hpp"
 #include "snes/savestate.hpp"
+#include "speedrun/race.hpp"
 #include "utils/logging.hpp"
 
 #include "imgui.h"
@@ -45,6 +46,10 @@ constexpr int kWindowGap = 16;           // space between the main and game wind
 constexpr float kLibraryShare = 0.45f;   // library height share when a debug panel is open
 constexpr double kFrameBudgetMs = 1000.0 / Emulator::kNtscFrameRate;
 constexpr float kClearGray = 24.f / 255.f;
+constexpr const char* kRacePromptOn = "Turn on race mode?";
+constexpr const char* kRacePromptOff = "Turn off race mode?";
+constexpr float kRacePromptWidthEm = 30.f;
+constexpr const char* kRaceTimelineHint = "Off in race mode: no snapshots are kept until you turn it off (Speedrun > Race mode).";
 
 constexpr SDL_DialogFileFilter kRomFilters[] = {
     {"SNES ROMs", "sfc;smc"},
@@ -116,6 +121,9 @@ auto App::init() -> bool {
     core.speed = settings_.speed;
     core.apply_speed();
     core.splits.timer.set_method(settings_.timer.primary);
+    core.verify.emulator = std::string(BITFORGE_TITLE) + " " + BITFORGE_VERSION;
+    core.verify.write = settings_.race.write_verification;
+    core.set_race(settings_.race.enabled, EmuThread::timer_clock());  // no game yet: nothing restarts
     for (int p = 0; p < kPadCount; p++) input_.set_port(p, settings_.ports[static_cast<size_t>(p)]);
     input_.set_pointer_config(settings_.pointer);
     input_.open_connected();
@@ -234,14 +242,20 @@ auto App::ui_frame() -> void {
     SDL_Event event;
     while (SDL_PollEvent(&event)) handle_event(event);
     send_input();
-    emu_thread_.set_speed_input(input_.hotkey_held(Hotkey::Rewind), input_.hotkey_held(Hotkey::FastForward));
-    if (input_.take_hotkey_press(Hotkey::FastForwardToggle)) {
+    // Race mode: the emulation thread ignores rewind and fast-forward too; this says why.
+    const bool rewind = input_.hotkey_held(Hotkey::Rewind) && !race_blocks(speedrun::Guard::Rewind);
+    const bool fast = input_.hotkey_held(Hotkey::FastForward) && !race_blocks(speedrun::Guard::FastForward);
+    emu_thread_.set_speed_input(rewind, fast);
+    if (input_.take_hotkey_press(Hotkey::FastForwardToggle) && !race_blocks(speedrun::Guard::FastForward)) {
         emu_thread_.post([](EmuThread::Core& c) { c.fast_forward_toggled = !c.fast_forward_toggled; });
     }
     if (input_.take_hotkey_press(Hotkey::MemoryWatch)) toggle_memory_panel();
+    if (input_.take_hotkey_press(Hotkey::RaceMode)) request_race(!status_.race);
     for (const auto& [hotkey, command] : kTimerHotkeyCommands) {
         uint64_t when = 0;
-        if (input_.take_hotkey_press(hotkey, &when)) timer_panel_.command(command, when);
+        if (!input_.take_hotkey_press(hotkey, &when)) continue;
+        if (command == TimerCommand::Pause && race_blocks(speedrun::Guard::TimerPause)) continue;
+        timer_panel_.command(command, when);
     }
     {
         std::unique_lock lock(dialog_mutex_);
@@ -406,11 +420,16 @@ auto App::handle_event(const SDL_Event& event) -> void {
         timer_hotkey(event.key.key, event.key.timestamp)) {
         return;
     }
-    // The memory watch hotkey works here too, unless a text field is taking the key.
-    if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && !ImGui::GetIO().WantTextInput && event.key.key != SDLK_UNKNOWN &&
-        event.key.key == settings_.hotkeys.keys[static_cast<size_t>(Hotkey::MemoryWatch)]) {
-        toggle_memory_panel();
-        return;
+    // The memory watch and race mode hotkeys work here too, unless a text field is taking the key.
+    if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && !ImGui::GetIO().WantTextInput && event.key.key != SDLK_UNKNOWN) {
+        if (event.key.key == settings_.hotkeys.keys[static_cast<size_t>(Hotkey::MemoryWatch)]) {
+            toggle_memory_panel();
+            return;
+        }
+        if (event.key.key == settings_.hotkeys.keys[static_cast<size_t>(Hotkey::RaceMode)]) {
+            request_race(!status_.race);
+            return;
+        }
     }
     ImGui_ImplSDL3_ProcessEvent(&event);
     if (event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && target == main_window_) request_quit();
@@ -473,7 +492,7 @@ auto App::timer_hotkey(SDL_Keycode key, uint64_t when_ns) -> bool {
     if (key == SDLK_UNKNOWN) return false;
     for (const auto& [hotkey, command] : kTimerHotkeyCommands) {
         if (settings_.hotkeys.keys[static_cast<size_t>(hotkey)] != key) continue;
-        timer_panel_.command(command, when_ns);
+        if (command != TimerCommand::Pause || !race_blocks(speedrun::Guard::TimerPause)) timer_panel_.command(command, when_ns);
         return true;
     }
     return false;
@@ -557,6 +576,7 @@ auto App::draw_ui() -> void {
     ImGui::PopStyleVar(2);
 
     draw_menu_bar();
+    draw_race_prompt();
 
     // Reserve the status bar, and the timeline strip while a game is loaded.
     const float status_h = ImGui::GetFrameHeightWithSpacing();
@@ -649,14 +669,17 @@ auto App::draw_menu_bar() -> void {
         }
         if (ImGui::MenuItem("Refresh library")) scan_roms();
         ImGui::Separator();
-        if (ImGui::BeginMenu("Save State", loaded)) {
+        using speedrun::Guard;
+        if (ImGui::BeginMenu("Save State", loaded && speedrun::race_allows(status_.race, Guard::SaveState))) {
             draw_state_menu(true);
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Load State", loaded)) {
+        race_tooltip(Guard::SaveState);
+        if (ImGui::BeginMenu("Load State", loaded && speedrun::race_allows(status_.race, Guard::LoadState))) {
             draw_state_menu(false);
             ImGui::EndMenu();
         }
+        race_tooltip(Guard::LoadState);
         ImGui::Separator();
         if (ImGui::MenuItem("Exit")) request_quit();
         ImGui::EndMenu();
@@ -671,9 +694,11 @@ auto App::draw_menu_bar() -> void {
             });
         }
         if (ImGui::MenuItem("Stop", nullptr, false, loaded)) request_stop();
-        if (ImGui::MenuItem("Frame advance", nullptr, false, loaded && status_.state == RunState::Paused)) {
+        const bool can_advance = speedrun::race_allows(status_.race, speedrun::Guard::FrameAdvance);
+        if (ImGui::MenuItem("Frame advance", nullptr, false, loaded && status_.state == RunState::Paused && can_advance)) {
             emu_thread_.post([](EmuThread::Core& c) { c.advance_one = true; });
         }
+        race_tooltip(speedrun::Guard::FrameAdvance);
         ImGui::Separator();
         ImGui::MenuItem("Controls", nullptr, &show_controls_);
         ImGui::MenuItem("Rewind / Fast-forward", nullptr, &show_speed_);
@@ -695,12 +720,6 @@ auto App::draw_menu_bar() -> void {
         }
         if (ImGui::MenuItem("Integer scaling", nullptr, &settings_.integer_scaling)) save_settings();
         if (ImGui::MenuItem("8:7 pixel aspect", nullptr, &settings_.aspect_8_7)) apply_view();
-        if (ImGui::MenuItem("Run timer", nullptr, settings_.show_timer)) {
-            settings_.show_timer = !settings_.show_timer;
-            select_timer_ = settings_.show_timer;
-            save_settings();
-        }
-        if (ImGui::MenuItem("Timer overlay in the game window", nullptr, &settings_.timer.overlay)) save_settings();
         if (ImGui::MenuItem("On-screen messages", nullptr, &settings_.show_messages)) {
             if (!settings_.show_messages) game_.show_message({});
             save_settings();
@@ -714,6 +733,30 @@ auto App::draw_menu_bar() -> void {
     }
 
     draw_audio_menu();
+
+    if (ImGui::BeginMenu("Speedrun")) {
+        const SDL_Keycode race_key = settings_.hotkeys.keys[static_cast<size_t>(Hotkey::RaceMode)];
+        if (ImGui::MenuItem("Race mode", race_key == SDLK_UNKNOWN ? nullptr : SDL_GetKeyName(race_key), status_.race)) {
+            request_race(!status_.race);
+        }
+        ImGui::SetItemTooltip("Restarts the game from power-on and turns off everything that changes the game or its timing "
+                              "(cheats, memory freezes and edits, rewind, the timeline, save states, fast-forward, frame "
+                              "advance, timer pause). A run finished this way is marked race verified.");
+        if (ImGui::MenuItem("Write a verification file for verified runs", nullptr, &settings_.race.write_verification)) {
+            emu_thread_.post([on = settings_.race.write_verification](EmuThread::Core& c) { c.verify.write = on; });
+            save_settings();
+        }
+        ImGui::SetItemTooltip("<splits>.attempt-<n>.verified.json beside the splits file: ROM hashes, emulator version, "
+                              "timing and the final times, for a leaderboard submission.");
+        ImGui::Separator();
+        if (ImGui::MenuItem("Run timer", nullptr, settings_.show_timer)) {
+            settings_.show_timer = !settings_.show_timer;
+            select_timer_ = settings_.show_timer;
+            save_settings();
+        }
+        if (ImGui::MenuItem("Timer overlay in the game window", nullptr, &settings_.timer.overlay)) save_settings();
+        ImGui::EndMenu();
+    }
 
     if (ImGui::BeginMenu("Debug")) {
         if (ImGui::MenuItem("Log", nullptr, &settings_.show_log)) save_settings();
@@ -1166,6 +1209,10 @@ auto App::apply_speed_settings() -> void {
 auto App::draw_speed_panel() -> void {
     SpeedConfig& s = settings_.speed;
     bool changed = false;
+    if (status_.race) {
+        ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.55f, 1.f), "Race mode is on: rewind and fast-forward are off until you turn it off "
+                                                             "(Speedrun > Race mode). These settings still apply after that.");
+    }
     ImGui::SeparatorText("Rewind");
     changed |= ImGui::Checkbox("Enable rewind", &s.rewind);
     ImGui::SetItemTooltip("Keeps compressed snapshots in memory while the game runs. The timeline shows them; hold the rewind hotkey to step back.");
@@ -1260,6 +1307,12 @@ auto App::draw_cheats_panel() -> void {
     sync_cheats();
     bool changed = false;
     int remove = -1;
+    const bool cheats_allowed = speedrun::race_allows(status_.race, speedrun::Guard::Cheats);
+    if (!cheats_allowed) {
+        ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.55f, 1.f), "Race mode is on: no cheat is applied, whatever is ticked here.");
+        race_tooltip(speedrun::Guard::Cheats);
+    }
+    ImGui::BeginDisabled(!cheats_allowed);
     if (ImGui::BeginTable("cheats", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_ScrollY,
                           ImVec2(0.f, -ImGui::GetFrameHeightWithSpacing() * 2.6f))) {
         ImGui::TableSetupColumn("On", ImGuiTableColumnFlags_WidthFixed);
@@ -1311,6 +1364,7 @@ auto App::draw_cheats_panel() -> void {
         for (auto& e : cheats_) e.enabled = false;
         changed = true;
     }
+    ImGui::EndDisabled();
     if (!cheat_error_.empty()) {
         ImGui::TextColored(ImVec4(1.f, 0.4f, 0.4f, 1.f), "%s", cheat_error_.c_str());
     } else {
@@ -1374,7 +1428,9 @@ auto App::apply_log_settings() -> void {
 auto App::state_hotkey(SDL_Keycode key, SDL_Keymod mod) -> bool {
     if (key < SDLK_F1 || key > SDLK_F10 || !status_.loaded) return false;
     const int slot = static_cast<int>(key - SDLK_F1) + 1;
-    if (mod & SDL_KMOD_SHIFT) {
+    const bool save = (mod & SDL_KMOD_SHIFT) != 0;
+    if (race_blocks(save ? speedrun::Guard::SaveState : speedrun::Guard::LoadState)) return true;  // the key is still ours
+    if (save) {
         save_slot(slot);
     } else {
         load_slot(slot);
@@ -1505,6 +1561,7 @@ auto App::timeline_hint_height() -> float {
         "Click a picture to play from there. Right-click it to save that moment to a slot.",
         "Rewind is off. Enable it under Emulation > Rewind / Fast-forward.",
         "It fills in as the game runs.",
+        kRaceTimelineHint,
     };
     const float label_w = ImGui::CalcTextSize("Timeline ").x;
     const float wrap = std::max(1.f, ImGui::GetContentRegionAvail().x - label_w);
@@ -1602,7 +1659,8 @@ auto App::save_moment(uint64_t id, int slot) -> void {
 auto App::draw_timeline() -> void {
     sync_timeline();
     const char* hint = "Click a picture to play from there. Right-click it to save that moment to a slot.";
-    if (!status_.rewind_enabled) hint = "Rewind is off. Enable it under Emulation > Rewind / Fast-forward.";
+    if (!speedrun::race_allows(status_.race, speedrun::Guard::Timeline)) hint = kRaceTimelineHint;
+    else if (!status_.rewind_enabled) hint = "Rewind is off. Enable it under Emulation > Rewind / Fast-forward.";
     else if (timeline_.empty()) hint = "It fills in as the game runs.";
     ImGui::TextUnformatted("Timeline");
     ImGui::SameLine();
@@ -1636,11 +1694,11 @@ auto App::draw_timeline() -> void {
             const ImVec2 max = ImGui::GetItemRectMax();
             ImGui::GetWindowDrawList()->AddRect(min, max, IM_COL32(242, 209, 71, 255), 0.f, 0, 2.f);
         }
-        if (clicked) play_from(view.id);
+        if (clicked && !race_blocks(speedrun::Guard::Timeline)) play_from(view.id);
         // The strip is on the bottom edge. A menu that opens downward is clipped before the last
         // slot, so anchor the popup's bottom-left to the thumbnail's top-left.
         ImGui::SetNextWindowPos(ImGui::GetItemRectMin(), ImGuiCond_Appearing, ImVec2(0.f, 1.f));
-        if (ImGui::BeginPopupContextItem()) {
+        if (speedrun::race_allows(status_.race, speedrun::Guard::Timeline) && ImGui::BeginPopupContextItem()) {
             refresh_slots();
             ImGui::TextDisabled("Save this moment");
             ImGui::Separator();
@@ -1691,6 +1749,11 @@ auto App::draw_status_bar() -> void {
         ImGui::SameLine();
         ImGui::TextUnformatted("|  MSU-1");
     }
+    if (status_.race) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.55f, 1.f), "|  RACE MODE");
+        ImGui::SetItemTooltip("Race mode is on (Speedrun > Race mode).");
+    }
     if (status_.rewinding) {
         ImGui::SameLine();
         ImGui::Text("|  << Rewinding (%.1f s left)", status_.rewind_seconds);
@@ -1702,6 +1765,82 @@ auto App::draw_status_bar() -> void {
         ImGui::SameLine();
         ImGui::Text("|  %s", status_text_.c_str());
     }
+}
+
+// ---- race mode -------------------------------------------------------------
+
+auto App::request_race(bool on) -> void {
+    const bool race_run = status_.timer.race_status() == speedrun::RaceStatus::Clean;
+    if (on && status_.loaded) race_prompt_ = RacePrompt::TurnOn;   // the game restarts: ask
+    else if (!on && race_run) race_prompt_ = RacePrompt::TurnOff;  // the run stops counting: ask
+    else set_race(on);
+    if (race_prompt_ != RacePrompt::None) SDL_RaiseWindow(main_window_);  // the question is in the main window
+}
+
+auto App::set_race(bool on) -> void {
+    emu_thread_.call([on](EmuThread::Core& c) { c.set_race(on, EmuThread::timer_clock()); });
+    status_ = emu_thread_.status();
+    race_told_ = 0;
+    settings_.race.enabled = on;
+    save_settings();
+    if (!on) notify("Race mode off");
+    else notify(status_.loaded ? "Race mode on: the game restarted from power-on" : "Race mode on: the next game starts clean");
+}
+
+auto App::draw_race_prompt() -> void {
+    if (race_prompt_ == RacePrompt::None) return;
+    const bool turn_on = race_prompt_ == RacePrompt::TurnOn;
+    const char* title = turn_on ? kRacePromptOn : kRacePromptOff;
+    if (!ImGui::IsPopupOpen(title)) ImGui::OpenPopup(title);
+    ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * kRacePromptWidthEm, 0.f));
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (!ImGui::BeginPopupModal(title, nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+        race_prompt_ = RacePrompt::None;
+        return;
+    }
+    ImGui::PushTextWrapPos(0.f);
+    if (turn_on) {
+        ImGui::TextUnformatted("The game restarts from power-on (a hard reset), so the run starts clean.");
+        if (status_.timer.state() != speedrun::TimerState::Ready) ImGui::TextUnformatted("The timer's current attempt is reset.");
+        ImGui::Spacing();
+        ImGui::TextUnformatted("Until you turn race mode off, these are off:");
+        for (const speedrun::GuardInfo& g : speedrun::kGuards) {
+            if (!speedrun::race_allows(true, g.id)) ImGui::BulletText("%.*s", static_cast<int>(g.label.size()), g.label.data());
+        }
+        ImGui::Spacing();
+        ImGui::TextUnformatted("A run started now and finished in race mode is marked race verified.");
+    } else {
+        ImGui::TextUnformatted("The run in progress started in race mode. Turning race mode off now means it no longer counts as "
+                               "race verified.");
+    }
+    ImGui::PopTextWrapPos();
+    ImGui::Separator();
+    bool close = false;
+    if (ImGui::Button(turn_on ? "Restart in race mode" : "Turn off race mode")) {
+        set_race(turn_on);
+        close = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) close = true;
+    if (close) {
+        race_prompt_ = RacePrompt::None;
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
+auto App::race_blocks(speedrun::Guard guard) -> bool {
+    if (speedrun::race_allows(status_.race, guard)) return false;
+    if ((race_told_ & speedrun::guard_bit(guard)) == 0) {
+        race_told_ |= speedrun::guard_bit(guard);
+        utils::Logger::info("%s", speedrun::blocked_message(guard).c_str());
+        notify(speedrun::blocked_message(guard));
+    }
+    return true;
+}
+
+auto App::race_tooltip(speedrun::Guard guard) const -> void {
+    if (!speedrun::race_allows(status_.race, guard)) ImGui::SetItemTooltip("%s", speedrun::blocked_tooltip(guard).c_str());
 }
 
 // ---- helpers ---------------------------------------------------------------

@@ -3,7 +3,9 @@
 #include "frontend/frame_pacer.hpp"
 #include "snes/savestate.hpp"
 #include "speedrun/autosplit.hpp"
+#include "speedrun/race.hpp"
 #include "utils/logging.hpp"
+#include "utils/sha1.hpp"
 
 #include <SDL3/SDL.h>
 
@@ -11,6 +13,7 @@
 #include <chrono>
 #include <ctime>
 #include <filesystem>
+#include <fstream>
 
 namespace bitforge::frontend {
 
@@ -136,6 +139,57 @@ auto EmuThread::Core::sync_splits() -> void {
     splits.error = error;
 }
 
+// ---- race mode (emulation thread) ------------------------------------------------------------
+
+auto EmuThread::Core::set_race(bool on, const speedrun::Clock& now) -> void {
+    if (on == emu.race()) return;
+    if (on && splits.timer.state() != speedrun::TimerState::Ready) {
+        splits.timer.reset(now);  // ends the attempt as a reset; new times still get the prompt
+        save_splits();
+    }
+    splits.timer.set_race(on);
+    emu.set_race(on);
+    if (!on || !emu.loaded()) return;
+    rewind.clear();
+    frames_since_snapshot = 0;
+    fast_forward_toggled = false;
+    advance_one = false;
+    audio.flush();  // the sound jumps to power-on
+    state = RunState::Running;
+    republish = true;
+}
+
+auto EmuThread::Core::write_verification_if_due() -> void {
+    const speedrun::RunTimer& t = splits.timer;
+    if (!verify.write || splits.file.path.empty() || t.race_status() != speedrun::RaceStatus::Verified) return;
+    if (t.last_event().serial == verify.written) return;
+    verify.written = t.last_event().serial;
+    const speedrun::Run& run = t.run();
+    speedrun::Verification v;
+    v.emulator = verify.emulator;
+    v.game = run.game;
+    v.category = run.category;
+    v.rom_file = emu.rom_name();
+    v.rom_crc32 = emu.rom_crc32();
+    v.rom_sha1 = utils::sha1_file(emu.rom_path()).value_or("");
+    v.standard = t.standard();
+    v.attempt = speedrun::next_attempt_id(run);  // the id the attempt gets when it's reset
+    v.started = speedrun::utc_stamp(t.started_unix());
+    v.ended = speedrun::utc_stamp(static_cast<int64_t>(std::time(nullptr)));
+    v.final_time = t.splits().empty() ? speedrun::Times{} : t.splits().back();
+    v.game_frames = t.game_frames();
+    for (size_t i = 0; i < run.segments.size() && i < t.splits().size(); i++) v.splits.push_back({run.segments[i].name, t.splits()[i]});
+    const std::string path = speedrun::verification_path(splits.file.path, v.attempt);
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    out << speedrun::format_verification(v);
+    if (!out) {
+        utils::Logger::error(utils::LogChannel::Rom, "Race verification: could not write %s", path.c_str());
+        return;
+    }
+    verify.path = path;
+    utils::Logger::info(utils::LogChannel::Rom, "Race verified run: %s", path.c_str());
+}
+
 auto EmuThread::start() -> void {
     if (running()) return;
     input_[0].fetch_or(kConnected, std::memory_order_relaxed);  // port 1 also takes the keyboard: always plugged in
@@ -210,6 +264,7 @@ auto EmuThread::run() -> void {
         }
         if (ran > 0) {
             core_.save_splits();  // a command reset the timer or edited the run, say
+            core_.write_verification_if_due();  // ...or split the end of a race run
             publish_status();
         }
 
@@ -243,7 +298,10 @@ auto EmuThread::step() -> bool {
     // nothing counted). Set before the step so the first frame after a (re)start is queued.
     c.audio.set_paused(!c.emu.loaded() || c.state != RunState::Running || held);
 
-    const bool stepping = c.emu.loaded() && !held && (c.state == RunState::Running || c.advance_one);
+    const bool race = c.emu.race();
+    const bool advance = c.advance_one && speedrun::race_allows(race, speedrun::Guard::FrameAdvance);
+    if (c.advance_one && !advance) c.advance_one = false;
+    const bool stepping = c.emu.loaded() && !held && (c.state == RunState::Running || advance);
     if (c.emu.rom_path() != c.rewind_rom) {  // another game (or none): its history goes
         c.rewind.clear();
         c.rewind_rom = c.emu.rom_path();
@@ -255,8 +313,9 @@ auto EmuThread::step() -> bool {
     if (stepping) {
         const uint32_t speed = speed_input_.load(std::memory_order_relaxed);
         const bool running = c.state == RunState::Running;
-        rewinding_ = running && c.speed.rewind && (speed & kRewindHeld) != 0;
-        fast_forward_ = running && !rewinding_ && ((speed & kFastHeld) != 0 || c.fast_forward_toggled);
+        rewinding_ = running && c.speed.rewind && speedrun::race_allows(race, speedrun::Guard::Rewind) && (speed & kRewindHeld) != 0;
+        fast_forward_ = running && !rewinding_ && speedrun::race_allows(race, speedrun::Guard::FastForward) &&
+                        ((speed & kFastHeld) != 0 || c.fast_forward_toggled);
         read_input();
         const uint64_t t0 = SDL_GetTicksNS();
         int ran = 1;
@@ -279,6 +338,7 @@ auto EmuThread::step() -> bool {
         c.advance_one = false;
         publish_frame();
         c.save_splits();  // an auto rule ended an attempt, say
+        c.write_verification_if_due();
     } else {
         last_push_ns_ = 0;  // paused or stopped: the next frame starts a new measurement
     }
@@ -329,7 +389,7 @@ auto EmuThread::read_input() -> void {
 // A rewind snapshot every `interval` emulated frames while rewind is on.
 auto EmuThread::snapshot_if_due() -> void {
     Core& c = core_;
-    if (!c.speed.rewind) return;
+    if (!c.speed.rewind || !speedrun::race_allows(c.emu.race(), speedrun::Guard::Rewind)) return;
     if (++c.frames_since_snapshot < c.rewind.interval()) return;
     c.frames_since_snapshot = 0;
     RewindThumb thumb;
@@ -477,6 +537,8 @@ auto EmuThread::publish_status() -> void {
     s.timer = c.splits.timer;
     s.splits_path = c.splits.file.path;
     s.splits_error = c.splits.error;
+    s.race = c.emu.race();
+    s.verification_path = c.verify.path;
     s.device_recording = c.audio.device_recording();
     if (s.device_recording) {
         s.device_recording_path = c.audio.device_recording_path();

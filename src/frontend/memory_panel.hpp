@@ -3,7 +3,8 @@
 // Debug > Memory watch: the RAM search and the watch list, drawn into the Memory tab. The search
 // and the watches themselves live in src/debug (no ImGui); this is only their UI. Memory is read
 // from the image the emulation thread publishes once per frame while the tab is showing, and
-// every write (a value edit, a freeze, the watch list) goes through the command queue.
+// every write (a value edit, a freeze, the watch list) goes through the command queue. In race
+// mode, freezes, edits and the Cheat button are greyed out (the core refuses them anyway).
 #include "debug/memory_watch.hpp"
 #include "debug/ram_search.hpp"
 #include "frontend/emu_thread.hpp"
@@ -55,6 +56,7 @@ private:
     std::array<char, 64> add_label_{};
     std::string watch_error_;
 
+    bool status_race_ = false;  // race mode: no freezes, edits or cheats from here
     int edit_row_ = -1;  // the watch whose value field is being typed in
     std::array<char, 32> edit_value_{};
 };

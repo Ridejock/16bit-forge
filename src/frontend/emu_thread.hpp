@@ -81,6 +81,9 @@ struct EmuStatus {
     speedrun::RunTimer timer;
     std::string splits_path;
     std::string splits_error;  // the last load or save problem, "" if none
+    // Race mode (speedrun/race.hpp) and the last race verification summary written.
+    bool race = false;
+    std::string verification_path;
 };
 
 
@@ -140,6 +143,21 @@ public:
         auto save_splits() -> void;
         // Another game (or none): saves the old one's run and loads the new one's last splits.
         auto sync_splits() -> void;
+
+        // Race mode. On: an attempt in progress is reset (a run can't turn into a race run
+        // halfway), the game is power-cycled and the rewind history, fast-forward and frame
+        // advance are dropped. Off: a race run in progress stops counting as verified.
+        auto set_race(bool on, const speedrun::Clock& now) -> void;
+        // After a verified finish: <splits>.attempt-<n>.verified.json, once per finish (if
+        // verify.write; verify.emulator names the emulator and its version in it).
+        struct Verify {
+            bool write = true;
+            std::string emulator;   // "16bit Forge 0.1.1"
+            uint64_t written = 0;   // the timer event (the finishing split) last written
+            std::string path;       // the last file written
+        };
+        Verify verify;
+        auto write_verification_if_due() -> void;
     };
     using Command = std::function<void(Core&)>;
 

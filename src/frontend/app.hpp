@@ -107,6 +107,17 @@ private:
     auto request_stop() -> void;
     auto request_quit() -> void;
 
+    // Race mode (speedrun/race.hpp). request_race asks first when turning it on (the game
+    // restarts) or off during a race run (the run stops counting); set_race does it.
+    auto request_race(bool on) -> void;
+    auto set_race(bool on) -> void;
+    auto draw_race_prompt() -> void;
+    // True when race mode blocks `guard`; the first time per guard (until race mode is switched
+    // again) it also says so in the status bar and the game window.
+    auto race_blocks(speedrun::Guard guard) -> bool;
+    // The hover text on a control race mode greys out (nothing when race mode is off).
+    auto race_tooltip(speedrun::Guard guard) const -> void;
+
     auto open_rom_dialog() -> void;
     auto scan_roms() -> void;
     auto place_game_window() -> void;
@@ -179,6 +190,9 @@ private:
     bool show_memory_ = false;
     bool select_memory_ = false;  // bring the Memory tab to the front on the next frame
     bool select_timer_ = false;   // ...and the Timer tab
+    enum class RacePrompt : uint8_t { None, TurnOn, TurnOff };
+    RacePrompt race_prompt_ = RacePrompt::None;
+    uint32_t race_told_ = 0;  // speedrun::guard_bit()s already reported since race mode was switched
     MemoryPanel memory_panel_{emu_thread_};
     TimerPanel timer_panel_{emu_thread_, settings_.timer};
     auto timer_hotkey(SDL_Keycode key, uint64_t when_ns) -> bool;  // main window: a timer key, handled

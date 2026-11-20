@@ -14,6 +14,10 @@
 // splits it once. Loading a state or resetting the console doesn't move the timer (a state can
 // come from anywhere); after a state load, auto-splits wait until the game is past the last
 // split's frame again. The frame after any jump never triggers an auto rule.
+//
+// Race mode (race.hpp): an attempt started while it is on is a race run; it stays one until it
+// ends, unless race mode goes off, memory is tampered with or the game jumps (race_status).
+#include "speedrun/race.hpp"
 #include "speedrun/splits.hpp"
 
 #include <functional>
@@ -38,6 +42,7 @@ struct FrameInfo {
   Jump jump = Jump::None;
   uint32_t tamper = 0;  // debug::TamperBits right now
   Clock now;
+  bool race = false;    // race mode is on
 };
 
 enum class Action : uint8_t { None, Start, Split, Undo, Skip, Pause, Resume, Reset };
@@ -101,6 +106,7 @@ public:
   // The timer's reading now (the final time once ended, the offset before the start).
   auto time(Method m, Nanos now) const -> Nanos;
   auto game_frames() const -> int64_t { return game_frames_; }
+  auto started_unix() const -> int64_t { return started_unix_; }  // when this attempt started
   // Segment i's time in this attempt (nullopt if it or the one before was skipped / not done).
   auto segment_time(size_t i, Method m) const -> std::optional<Nanos>;
   // This attempt against the PB at split i.
@@ -113,6 +119,12 @@ public:
   auto finished_pb() const -> bool;  // ended, and better than the PB (or the first finish)
   // debug::TamperBits seen during this attempt: a freeze, cheat or memory edit was active.
   auto tampered() const -> uint32_t { return tamper_; }
+  // Race mode as the timer last heard (each frame, or set_race when it is switched). Turning it
+  // off during a race run breaks the run.
+  auto set_race(bool on) -> void;
+  auto race() const -> bool { return race_; }
+  auto race_status() const -> RaceStatus;
+  auto race_breaks() const -> uint32_t;  // RaceBreak bits, for the tooltip
   auto last_event() const -> const Event& { return last_event_; }
   auto last_auto_event() const -> const Event& { return last_auto_; }
 
@@ -150,6 +162,9 @@ private:
   uint64_t last_frame_ = 0;
   uint64_t hold_until_ = 0;  // auto-splits wait until the game passes this frame
   uint32_t tamper_ = 0;
+  bool race_ = false;       // race mode is on
+  bool race_run_ = false;   // this attempt started in race mode
+  uint32_t race_breaks_ = 0;
   std::vector<Pending> pending_;
   Event last_event_;
   Event last_auto_;

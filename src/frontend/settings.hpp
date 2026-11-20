@@ -19,6 +19,12 @@ struct TimerConfig {
     Corner corner = Corner::TopRight;
 };
 
+// [race]: race mode (speedrun/race.hpp).
+struct RaceConfig {
+    bool enabled = false;            // on at start-up too (a game booted then starts clean)
+    bool write_verification = true;  // a verified finish writes <splits>.attempt-<n>.verified.json
+};
+
 struct Settings {
     static constexpr int kMinScale = 1;
     static constexpr int kMaxScale = 4;
@@ -44,6 +50,7 @@ struct Settings {
     PortDevices port_devices = kDefaultPortDevices; // [ports]: what's in console ports 1 and 2
     PointerConfig pointer;                          // [ports]: mouse speed, scope crosshair
     TimerConfig timer;                              // [timer]
+    RaceConfig race;                                // [race]
     bool show_timer = false;                        // the Timer tab is open
 
     // [log]: per-sink level and log file, per-channel enable. Applied to utils::Logger.

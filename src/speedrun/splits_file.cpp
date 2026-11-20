@@ -2,7 +2,9 @@
 #include "speedrun/splits_file.hpp"
 #include "speedrun/autosplit.hpp"
 #include "speedrun/lss.hpp"
+#include "speedrun/race.hpp"
 
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -68,22 +70,27 @@ auto load_splits(const std::string& path, std::string* error) -> std::optional<L
     return std::nullopt;
   }
   if (const auto rules = read_text(autosplit_path(path))) parse_autosplits(*rules, *run);
+  if (const auto race = read_text(race_sidecar_path(path))) parse_race_sidecar(*race, *run);
   return LoadedSplits{std::move(*run), SplitsFile{path, *text}};
 }
 
 auto save_splits(const Run& run, SplitsFile& file, std::string* error) -> bool {
   std::string text = write_lss(run, file.original);
-  const std::string sidecar = autosplit_path(file.path);
-  const std::string rules = format_autosplits(run);
-  bool ok = write_text(file.path, text);
-  if (ok && rules.empty()) {
+  // Each sidecar holds what the .lss can't; it goes away when there is nothing for it.
+  const std::array<std::pair<std::string, std::string>, 2> sidecars = {{
+      {autosplit_path(file.path), format_autosplits(run)},
+      {race_sidecar_path(file.path), format_race_sidecar(run)},
+  }};
+  std::string failed;
+  if (!write_text(file.path, text)) failed = file.path;
+  for (const auto& [path, contents] : sidecars) {
+    if (!failed.empty()) break;
     std::error_code ec;
-    fs::remove(sidecar, ec);
-  } else if (ok) {
-    ok = write_text(sidecar, rules);
+    if (contents.empty()) fs::remove(path, ec);
+    else if (!write_text(path, contents)) failed = path;
   }
-  if (!ok) {
-    if (error) *error = "Can't write " + (rules.empty() ? file.path : file.path + " / " + sidecar);
+  if (!failed.empty()) {
+    if (error) *error = "Can't write " + failed;
     return false;
   }
   file.original = std::move(text);

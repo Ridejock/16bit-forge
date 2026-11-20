@@ -2,6 +2,7 @@
 #include "frontend/timer_panel.hpp"
 #include "speedrun/autosplit.hpp"
 #include "speedrun/lss.hpp"
+#include "speedrun/race.hpp"
 #include "utils/logging.hpp"
 
 #include "imgui.h"
@@ -27,6 +28,8 @@ constexpr uint32_t kAheadColor = 0xFF3CCB6A;
 constexpr uint32_t kBehindColor = 0xFFE5534B;
 constexpr uint32_t kGoldColor = 0xFFFFC83C;
 constexpr uint32_t kModifiedColor = 0xFFFF9A2E;
+// The race badge's colour by speedrun::RaceStatus (Off has no badge).
+constexpr std::array<uint32_t, speedrun::kRaceStatuses.size()> kRaceColors = {kDimColor, 0xFF5AB4FF, kAheadColor, kModifiedColor};
 
 constexpr float kBigTimerScale = 2.6f;    // the tab's main timer, in font sizes
 constexpr int kOverlayTimerScale = 2;     // the overlay's main timer, in glyph sizes
@@ -120,6 +123,16 @@ auto test_preview(const debug::TestInfo& t) -> std::string {
     return label;
 }
 
+auto race_color(speedrun::RaceStatus s) -> uint32_t { return kRaceColors[static_cast<size_t>(s)]; }
+
+// The badge's hover text: what it means, and why a race run stopped counting.
+auto race_help(const RunTimer& t) -> std::string {
+    const speedrun::RaceStatus s = t.race_status();
+    std::string help(speedrun::info(s).help);
+    if (s == speedrun::RaceStatus::Broken) help += " Why: " + speedrun::describe_breaks(t.race_breaks()) + ".";
+    return help;
+}
+
 auto watch_label(const debug::Watch& w) -> std::string {
     const std::string address = debug::format_address(w.region, w.offset);
     return w.label.empty() ? address : w.label + "  (" + address + ")";
@@ -138,7 +151,12 @@ auto timer_overlay_lines(const RunTimer& t, Nanos now) -> std::vector<TextLine> 
     std::string info = std::string(speedrun::info(other(m)).short_label) + " " + speedrun::format_time(t.time(other(m), now));
     if (d) info = speedrun::format_delta(*d) + "  " + info;
     lines.push_back({info, d ? argb : kDimColor, 1});
-    if (t.tampered()) lines.push_back({kModifiedTag, kModifiedColor, 1});
+    // A race run shows its race badge (which covers tampering); any other run the "modified" tag.
+    if (const auto race = t.race_status(); race != speedrun::RaceStatus::Off) {
+        lines.push_back({std::string(speedrun::info(race).tag), race_color(race), 1});
+    } else if (t.tampered()) {
+        lines.push_back({kModifiedTag, kModifiedColor, 1});
+    }
     return lines;
 }
 
@@ -244,7 +262,8 @@ auto TimerPanel::draw(const EmuStatus& status, SDL_Window* window) -> bool {
     const auto& run = t.run();
     ImGui::Text("%s  -  %s", run.game.empty() ? status.rom_name.c_str() : run.game.c_str(), run.category.c_str());
     ImGui::SameLine();
-    ImGui::TextDisabled("   attempts %d, completed %d", run.attempt_count, speedrun::completed_runs(run));
+    ImGui::TextDisabled("   attempts %d, completed %d, race verified %d", run.attempt_count, speedrun::completed_runs(run),
+                        speedrun::verified_runs(run));
     draw_times(t, now);
     draw_splits(t, now);
     const bool changed = draw_controls(status);
@@ -261,10 +280,18 @@ auto TimerPanel::draw_times(const RunTimer& t, Nanos now) -> void {
     ImGui::BeginGroup();
     ImGui::TextDisabled("%s  %s", speedrun::info(other(m)).short_label.data(), speedrun::format_time(t.time(other(m), now)).c_str());
     ImGui::TextDisabled("%s  %s", speedrun::info(m).label.data(), speedrun::state_label(t.state()).data());
-    if (t.tampered()) {
+    if (const auto race = t.race_status(); race != speedrun::RaceStatus::Off) {
+        ImGui::SameLine();
+        ImGui::TextColored(color(race_color(race)), "[%s]", speedrun::info(race).tag.data());
+        ImGui::SetItemTooltip("%s", race_help(t).c_str());
+    } else if (t.tampered()) {
         ImGui::SameLine();
         ImGui::TextColored(color(kModifiedColor), "[%s]", kModifiedTag);
         ImGui::SetItemTooltip("%s", kModifiedHelp);
+    } else if (t.race() && t.state() == TimerState::Ready) {
+        ImGui::SameLine();
+        ImGui::TextColored(color(race_color(speedrun::RaceStatus::Clean)), "[race mode: ready]");
+        ImGui::SetItemTooltip("Race mode is on: the next run you start counts as a race run.");
     }
     ImGui::EndGroup();
 }
@@ -351,7 +378,11 @@ auto TimerPanel::draw_controls(const EmuStatus& status) -> bool {
         {"Reset", TimerCommand::Reset},
     };
     for (const Button& b : buttons) {
+        const bool blocked = b.command == TimerCommand::Pause && !speedrun::race_allows(status.race, speedrun::Guard::TimerPause);
+        ImGui::BeginDisabled(blocked);
         if (ImGui::Button(b.label)) command(b.command);
+        ImGui::EndDisabled();
+        if (blocked) ImGui::SetItemTooltip("%s", speedrun::blocked_tooltip(speedrun::Guard::TimerPause).c_str());
         ImGui::SameLine();
     }
     bool changed = false;
@@ -397,6 +428,12 @@ auto TimerPanel::draw_file(const EmuStatus& status, SDL_Window* window) -> void 
     ImGui::TextDisabled("%s", status.splits_path.c_str());
     if (!ready) ImGui::SetItemTooltip("Reset the timer to edit or change the splits.");
     if (!status.splits_error.empty()) ImGui::TextColored(color(kBehindColor), "%s", status.splits_error.c_str());
+    if (!status.verification_path.empty()) {
+        ImGui::TextColored(color(race_color(speedrun::RaceStatus::Verified)), "Verification file:");
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", status.verification_path.c_str());
+        ImGui::SetItemTooltip("Written when the last race verified run finished: ROM hashes, emulator version, timing, times.");
+    }
 }
 
 auto TimerPanel::show_dialog(Dialog dialog, SDL_Window* window, const std::string& start) -> void {

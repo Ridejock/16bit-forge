@@ -89,6 +89,7 @@ struct Attempt {
   Times time;           // the final time; empty when it was reset before the end
   std::string started;  // "MM/dd/yyyy HH:mm:ss" UTC, as LiveSplit writes it ("" = unknown)
   std::string ended;
+  bool race_verified = false;  // finished in race mode, untouched (kept in the .race sidecar, see race.hpp)
   auto finished() const -> bool { return !time.empty(); }
   auto operator==(const Attempt&) const -> bool = default;
 };

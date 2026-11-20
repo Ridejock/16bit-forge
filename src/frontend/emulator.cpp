@@ -2,6 +2,7 @@
 #include "frontend/emulator.hpp"
 #include "snes/savestate.hpp"
 #include "snes/system.hpp"
+#include "speedrun/race.hpp"
 #include "utils/logging.hpp"
 
 #include <algorithm>
@@ -116,6 +117,25 @@ auto Emulator::reset() -> void {
     readings_.clear();
 }
 
+auto Emulator::power_cycle() -> bool {
+    if (!system_) return false;
+    const std::string path = rom_path_;  // load() replaces it
+    utils::Logger::info(utils::LogChannel::Rom, "Power cycle");
+    return load(path);
+}
+
+auto Emulator::set_race(bool on) -> void {
+    if (on == race_) return;
+    race_ = on;
+    utils::Logger::info(utils::LogChannel::Rom, "Race mode %s", on ? "on" : "off");
+    if (!system_) return;
+    if (on) {
+        power_cycle();  // also drops freezes and the hand-edit mark; load_cheats() holds the cheats back
+    } else {
+        apply_cheats();
+    }
+}
+
 auto Emulator::run_frame() -> void {
     if (!system_) return;
     apply_freezes();
@@ -170,6 +190,8 @@ auto Emulator::set_scope(int port, const bitforge::ScopeInput& input) -> void {
 
 auto Emulator::rom_stem() const -> std::string { return fs::path(rom_path_).stem().string(); }
 
+auto Emulator::rom_crc32() const -> uint32_t { return system_ ? system_->rom_crc32() : 0; }
+
 auto Emulator::state_path(int slot) const -> std::string { return state_path_for(data_dir_, rom_path_, slot); }
 
 auto Emulator::state_path_for(const std::string& data_dir, const std::string& rom_path, int slot) -> std::string {
@@ -183,6 +205,7 @@ auto Emulator::sram_path() const -> std::string {
 
 auto Emulator::save_state(int slot) -> std::string {
     if (!system_) return "no game is running";
+    if (!speedrun::race_allows(race_, speedrun::Guard::SaveState)) return speedrun::blocked_message(speedrun::Guard::SaveState);
     const auto now = std::chrono::system_clock::now();
     const int64_t timestamp = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
     const std::vector<uint8_t> data = savestate::encode(*system_, frames_, timestamp, system_->get_framebuffer(),
@@ -198,6 +221,7 @@ auto Emulator::save_state(int slot) -> std::string {
 
 auto Emulator::load_state(int slot) -> std::string {
     if (!system_) return "no game is running";
+    if (!speedrun::race_allows(race_, speedrun::Guard::LoadState)) return speedrun::blocked_message(speedrun::Guard::LoadState);
     const std::string path = state_path(slot);
     const auto data = read_file(path);
     if (!data) {
@@ -236,6 +260,7 @@ auto Emulator::save_snapshot() -> std::vector<uint8_t> {
 
 auto Emulator::load_snapshot(std::span<const uint8_t> data) -> bool {
     if (!system_ || data.size() <= sizeof(uint64_t)) return false;
+    if (!speedrun::race_allows(race_, speedrun::Guard::Rewind)) return false;  // rewind and the timeline
     if (!system_->load_state(data.subspan(sizeof(uint64_t)))) return false;
     frames_ = 0;
     for (size_t i = 0; i < sizeof(uint64_t); i++) frames_ |= static_cast<uint64_t>(data[i]) << (8 * i);
@@ -251,6 +276,7 @@ auto Emulator::load_snapshot(std::span<const uint8_t> data) -> bool {
 auto Emulator::save_snapshot_to_slot(int slot, std::span<const uint8_t> snapshot, const uint32_t* thumb, int thumb_w,
                                      int thumb_h) -> std::string {
     if (!system_) return "no game is running";
+    if (!speedrun::race_allows(race_, speedrun::Guard::Timeline)) return speedrun::blocked_message(speedrun::Guard::Timeline);
     if (slot < 1 || slot > kStateSlots) return "that slot does not exist";
     if (snapshot.size() <= sizeof(uint64_t)) return "that moment is no longer in the timeline";
     uint64_t frame = 0;
@@ -323,13 +349,19 @@ auto Emulator::load_cheats() -> void {
         const auto on = std::count_if(cheats_.begin(), cheats_.end(), [](const CheatEntry& e) { return e.enabled; });
         utils::Logger::info(utils::LogChannel::Rom, "Cheats: %zu loaded, %td on (%s)", cheats_.size(), on, cheats_path().c_str());
     }
-    system_->set_cheats(cheats_);
+    apply_cheats();
+}
+
+auto Emulator::apply_cheats() -> void {
+    if (!system_) return;
+    if (speedrun::race_allows(race_, speedrun::Guard::Cheats)) system_->set_cheats(cheats_);
+    else system_->set_cheats({});
 }
 
 auto Emulator::set_cheats(std::vector<CheatEntry> entries) -> bool {
     if (!system_) return false;
     cheats_ = std::move(entries);
-    system_->set_cheats(cheats_);
+    apply_cheats();
     const std::string path = cheats_path();
     std::error_code ec;
     if (cheats_.empty() && !fs::exists(path, ec)) return true;
@@ -354,6 +386,9 @@ auto Emulator::load_watches() -> void {
 auto Emulator::set_watches(std::vector<debug::Watch> entries) -> bool {
     if (!system_) return false;
     watches_ = std::move(entries);
+    if (!speedrun::race_allows(race_, speedrun::Guard::Freeze)) {
+        for (debug::Watch& w : watches_) w.frozen = false;
+    }
     debug::assign_watch_ids(watches_);
     watches_revision_++;
     apply_freezes();
@@ -370,6 +405,7 @@ auto Emulator::memory(debug::Region region) -> std::span<uint8_t> {
 }
 
 auto Emulator::write_memory(debug::Region region, uint32_t offset, debug::ValueSize size, uint32_t value) -> bool {
+    if (!speedrun::race_allows(race_, speedrun::Guard::MemoryEdit)) return false;
     if (!debug::write_value(memory(region), offset, size, value)) return false;
     if (region == debug::Region::Sram) system_->mark_sram_dirty();  // so the battery file follows
     poked_ = true;
@@ -383,13 +419,16 @@ auto Emulator::evaluate(const debug::Condition& condition) const -> bool {
 auto Emulator::memory_tampered() const -> uint32_t {
     uint32_t bits = 0;
     if (debug::any_frozen(watches_)) bits |= debug::kTamperFreeze;
-    if (std::any_of(cheats_.begin(), cheats_.end(), [](const CheatEntry& c) { return c.enabled; })) bits |= debug::kTamperCheat;
+    const bool cheats_apply = speedrun::race_allows(race_, speedrun::Guard::Cheats);
+    if (cheats_apply && std::any_of(cheats_.begin(), cheats_.end(), [](const CheatEntry& c) { return c.enabled; })) {
+        bits |= debug::kTamperCheat;
+    }
     if (poked_) bits |= debug::kTamperPoke;
     return bits;
 }
 
 auto Emulator::step_timer(speedrun::RunTimer& timer, const speedrun::Clock& now) -> speedrun::Event {
-    const speedrun::FrameInfo frame{frames_, take_jump(), memory_tampered(), now};
+    const speedrun::FrameInfo frame{frames_, take_jump(), memory_tampered(), now, race_};
     return timer.on_frame(frame, [this](const debug::Condition& c) { return evaluate(c); });
 }
 
@@ -406,7 +445,7 @@ auto Emulator::sample_watches() -> void {
 }
 
 auto Emulator::apply_freezes() -> void {
-    if (watches_.empty()) return;
+    if (watches_.empty() || !speedrun::race_allows(race_, speedrun::Guard::Freeze)) return;
     const uint32_t changed = debug::apply_freezes(watches_, region_memory());
     if (changed & (1u << static_cast<uint32_t>(debug::Region::Sram))) system_->mark_sram_dirty();
 }

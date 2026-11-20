@@ -57,6 +57,8 @@ auto RunTimer::clear_attempt() -> void {
   game_frames_ = 0;
   hold_until_ = 0;
   tamper_ = 0;
+  race_run_ = false;
+  race_breaks_ = 0;
 }
 
 auto RunTimer::event(Action action, int segment, bool automatic, uint64_t frame) -> Event {
@@ -73,6 +75,7 @@ auto RunTimer::start(const Clock& now) -> Event {
   state_ = TimerState::Running;
   start_mono_ = now.mono;
   started_unix_ = now.unix_seconds;
+  race_run_ = race_;
   mutate_run().attempt_count++;
   return event(Action::Start, 0);
 }
@@ -141,6 +144,7 @@ auto RunTimer::record_attempt(const Clock& now) -> void {
   Attempt a;
   a.id = next_attempt_id(r);
   if (finished) a.time = splits_.back();
+  a.race_verified = race_status() == RaceStatus::Verified;
   a.started = utc_stamp(started_unix_);
   a.ended = utc_stamp(now.unix_seconds);
   r.attempts.push_back(a);
@@ -217,7 +221,12 @@ auto RunTimer::on_frame(const FrameInfo& f, const ConditionTest& test) -> Event 
       game_frames_++;
     }
   }
-  if (state_ == TimerState::Running || state_ == TimerState::Paused) tamper_ |= f.tamper;
+  set_race(f.race);
+  if (state_ == TimerState::Running || state_ == TimerState::Paused) {
+    tamper_ |= f.tamper;
+    if (race_run_ && (f.jump == Jump::Load || f.jump == Jump::Rewind)) race_breaks_ |= kBreakJump;
+    if (race_run_ && !race_) race_breaks_ |= kBreakRaceOff;  // e.g. an undo after the finish, race mode off since
+  }
   // A state can be from anywhere: it doesn't move the timer, but auto-splits wait until the game
   // is past the last split's frame again (replaying a state saved before it can't split twice).
   if (active() && f.jump == Jump::Load) {
@@ -241,6 +250,19 @@ auto RunTimer::on_frame(const FrameInfo& f, const ConditionTest& test) -> Event 
   if (!rule || !test(rule->condition)) return {};
   const Event e = split(f.now);
   return event(Action::Split, e.segment, true, f.frame);
+}
+
+auto RunTimer::set_race(bool on) -> void {
+  if (race_ && !on && race_run_ && (state_ == TimerState::Running || state_ == TimerState::Paused)) race_breaks_ |= kBreakRaceOff;
+  race_ = on;
+}
+
+auto RunTimer::race_breaks() const -> uint32_t { return race_breaks_ | (tamper_ ? kBreakTamper : 0u); }
+
+auto RunTimer::race_status() const -> RaceStatus {
+  if (!active() || !race_run_) return RaceStatus::Off;
+  if (race_breaks() != 0) return RaceStatus::Broken;
+  return state_ == TimerState::Ended ? RaceStatus::Verified : RaceStatus::Clean;
 }
 
 // The newest split's index, if any (skipped segments have no time).

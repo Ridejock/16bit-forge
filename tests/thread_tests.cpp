@@ -14,7 +14,9 @@
 #include "frontend/emu_thread.hpp"
 #include "frontend/thread_sync.hpp"
 #include "speedrun/autosplit.hpp"
+#include "speedrun/race.hpp"
 #include "utils/logging.hpp"
+#include "utils/sha1.hpp"
 
 #include <SDL3/SDL.h>
 
@@ -23,6 +25,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <thread>
 #include <vector>
@@ -635,6 +639,99 @@ auto test_harness_speed() -> void {
     CHECK(count_underrun_warnings() == 0);  // none while fast-forward/rewind is on, or in the settle after
 }
 
+// Race mode on the emulation thread: turning it on mid-run resets the attempt and power-cycles
+// the game; the rewind and fast-forward hotkeys (held), the fast-forward toggle and frame
+// advance do nothing and no rewind snapshots are kept; a run then split to the end in race mode
+// writes its verification file (with the ROM's SHA-1) and is saved as race verified. Turning it
+// off brings fast-forward back. ThreadSanitizer checks the status handoff of the race flag.
+auto test_race_mode() -> void {
+    namespace sr = bitforge::speedrun;
+    constexpr uint64_t kTimeoutNs = 20'000'000'000ULL;
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "bitforge_thread_tests_race";
+    std::filesystem::remove_all(dir);
+    EmuThread emu;
+    emu.core().emu.set_data_dir(dir.string());
+    emu.core().speed.rewind = true;
+    emu.core().speed.rewind_interval = 1;
+    emu.core().speed.fast_forward_speed = 4;
+    emu.core().apply_speed();
+    emu.core().verify.emulator = "16bit Forge test";
+    const std::string rom = test_rom::write_test_rom(3);
+    emu.start();
+    CHECK(boot(emu, rom));
+    auto wait_for = [&emu](auto&& done) {
+        const uint64_t until = SDL_GetTicksNS() + kTimeoutNs;
+        while (SDL_GetTicksNS() < until) {
+            if (done(emu.status())) return true;
+            SDL_DelayNS(1'000'000);
+        }
+        return false;
+    };
+    CHECK(wait_for([](const EmuStatus& st) { return !st.splits_path.empty() && st.rewind_entries > 10; }));
+    emu.call([](EmuThread::Core& c) {
+        c.set_run(sr::make_run("Race", "Any%", 2));
+        c.splits.timer.start(EmuThread::timer_clock());
+    });
+    CHECK(emu.status().timer.state() == sr::TimerState::Running && emu.status().timer.race_status() == sr::RaceStatus::Off);
+
+    // On: the attempt is reset, the game restarts, the history is gone.
+    emu.call([](EmuThread::Core& c) { c.set_race(true, EmuThread::timer_clock()); });
+    const EmuStatus on = emu.status();
+    CHECK(on.race && on.timer.state() == sr::TimerState::Ready && on.timer.run().attempts.size() == 1);
+    CHECK(on.rewind_entries == 0 && on.frame_count < 30 && on.state == RunState::Running);
+
+    // Held rewind / fast-forward and the toggle: ignored. Nothing goes into the history.
+    emu.set_speed_input(true, true);
+    emu.post([](EmuThread::Core& c) { c.fast_forward_toggled = true; });
+    const uint64_t from = on.frame_count;
+    CHECK(wait_for([from](const EmuStatus& st) { return st.frame_count > from + 60; }));
+    const EmuStatus held = emu.status();
+    CHECK(!held.rewinding && !held.fast_forward && held.rewind_entries == 0);
+    emu.set_speed_input(false, false);
+    // Frame advance while paused: ignored.
+    emu.call([](EmuThread::Core& c) {
+        c.state = RunState::Paused;
+        c.advance_one = true;
+    });
+    const uint64_t paused_at = emu.status().frame_count;
+    SDL_DelayNS(100'000'000);
+    CHECK(emu.status().frame_count == paused_at);
+    emu.call([](EmuThread::Core& c) { c.state = RunState::Running; });
+
+    // A race run to the end: verified, its file written, saved as such.
+    emu.call([](EmuThread::Core& c) { c.splits.timer.start(EmuThread::timer_clock()); });
+    CHECK(wait_for([](const EmuStatus& st) { return st.timer.race_status() == sr::RaceStatus::Clean && st.timer.game_frames() > 10; }));
+    emu.call([](EmuThread::Core& c) { c.splits.timer.split(EmuThread::timer_clock()); });
+    CHECK(wait_for([](const EmuStatus& st) { return st.timer.game_frames() > 20; }));
+    emu.call([](EmuThread::Core& c) { c.splits.timer.split(EmuThread::timer_clock()); });
+    CHECK(wait_for([](const EmuStatus& st) { return !st.verification_path.empty(); }));  // written after the command batch
+    const EmuStatus done = emu.status();
+    CHECK(done.timer.race_status() == sr::RaceStatus::Verified);
+    CHECK(done.verification_path == sr::verification_path(done.splits_path, 2));
+    {
+        std::ifstream in(done.verification_path, std::ios::binary);
+        const std::string json((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        CHECK(json.find("\"race_verified\": true") != std::string::npos);
+        CHECK(json.find(bitforge::utils::sha1_file(rom).value_or("?")) != std::string::npos);
+        CHECK(json.find("\"emulator\": \"16bit Forge test\"") != std::string::npos);
+    }
+    emu.call([](EmuThread::Core& c) {
+        c.splits.timer.reset(EmuThread::timer_clock());
+        c.splits.timer.resolve_pending(true);
+    });
+
+    // Off: fast-forward works again.
+    emu.call([](EmuThread::Core& c) { c.set_race(false, EmuThread::timer_clock()); });
+    emu.set_speed_input(false, true);
+    CHECK(wait_for([](const EmuStatus& st) { return !st.race && st.fast_forward; }));
+    emu.set_speed_input(false, false);
+    const std::string splits = emu.status().splits_path;
+    emu.stop();
+    const auto saved = sr::load_splits(splits);
+    CHECK(saved && saved->run.attempts.size() == 2 && saved->run.attempts[1].race_verified && !saved->run.attempts[0].race_verified);
+    std::filesystem::remove_all(dir);
+}
+
 }  // namespace
 
 int main() {
@@ -649,6 +746,7 @@ int main() {
         {"emu thread: call/post, inline, nested, restart", test_emu_calls},
         {"emu thread: memory image, writes, freezes", test_memory_view},
         {"emu thread: run timer, auto-splits, rewind, splits file", test_run_timer},
+        {"emu thread: race mode gating, verified run, file", test_race_mode},
         {"harness: UI stalls 170 ms, timer pacing", test_harness_timer},
         {"harness: UI stalls 170 ms, audio-sync pacing", test_harness_audio_sync},
         {"harness: same stalls on the emu thread (control)", test_harness_control},

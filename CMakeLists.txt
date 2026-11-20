@@ -102,7 +102,9 @@ add_library(bitforge_core STATIC
     src/speedrun/lss.cpp
     src/speedrun/autosplit.cpp
     src/speedrun/splits_file.cpp
+    src/speedrun/race.cpp
     src/utils/logging.cpp
+    src/utils/sha1.cpp
 )
 target_include_directories(bitforge_core PUBLIC src)
 
@@ -240,6 +242,13 @@ add_executable(timer_tests tests/timer_tests.cpp src/frontend/emulator.cpp src/f
 target_include_directories(timer_tests PRIVATE src)
 target_link_libraries(timer_tests PRIVATE bitforge_core)
 
+# Race mode (src/speedrun/race.*): the guards, race verification in the run timer, the .race
+# sidecar beside the .lss, the verification summary, SHA-1, and the core refusing cheats,
+# freezes, edits, states and snapshots on a built-in test ROM. Headless.
+add_executable(race_tests tests/race_tests.cpp src/frontend/emulator.cpp src/frontend/rewind.cpp)
+target_include_directories(race_tests PRIVATE src)
+target_link_libraries(race_tests PRIVATE bitforge_core)
+
 # Frame pacing (header-only logic, virtual time).
 add_executable(pacer_tests tests/pacer_tests.cpp)
 target_include_directories(pacer_tests PRIVATE src)
@@ -256,7 +265,7 @@ target_link_libraries(thread_tests PRIVATE bitforge_core SDL3::SDL3-static Threa
 add_executable(audio_dump tools/audio_dump.cpp)
 target_link_libraries(audio_dump PRIVATE bitforge_core)
 
-foreach(target ${PROJECT_NAME} bitforge_core cpu_tests ppu_tests apu_tests state_tests chip_tests input_tests filter_tests audio_sync_tests memory_tests timer_tests pacer_tests thread_tests audio_dump)
+foreach(target ${PROJECT_NAME} bitforge_core cpu_tests ppu_tests apu_tests state_tests chip_tests input_tests filter_tests audio_sync_tests memory_tests timer_tests race_tests pacer_tests thread_tests audio_dump)
     if(MSVC)
         target_compile_options(${target} PRIVATE /W4)
         target_compile_definitions(${target} PRIVATE _CRT_SECURE_NO_WARNINGS)  # fopen/getenv are fine here
@@ -267,7 +276,7 @@ endforeach()
 
 # ---- tests: ctest runs every suite headless (no window, no audio device, no ROM files) ----
 enable_testing()
-foreach(suite cpu_tests ppu_tests apu_tests state_tests chip_tests audio_sync_tests input_tests filter_tests memory_tests timer_tests pacer_tests thread_tests)
+foreach(suite cpu_tests ppu_tests apu_tests state_tests chip_tests audio_sync_tests input_tests filter_tests memory_tests timer_tests race_tests pacer_tests thread_tests)
     add_test(NAME ${suite} COMMAND ${suite})
     set_tests_properties(${suite} PROPERTIES TIMEOUT 900 ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy")
 endforeach()

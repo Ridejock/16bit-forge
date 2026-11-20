@@ -35,7 +35,8 @@ inline constexpr std::array<TimerHotkey, 5> kTimerHotkeyCommands = {{
 }};
 
 // The overlay's lines for `timer` at `now`: the segment, the big timer, the delta, the other
-// method's time and the "modified" tag. Empty while there are no splits.
+// method's time and the race badge (a race run) or the "modified" tag. Empty while there are
+// no splits.
 auto timer_overlay_lines(const speedrun::RunTimer& timer, speedrun::Nanos now) -> std::vector<TextLine>;
 
 class TimerPanel {

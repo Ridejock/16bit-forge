@@ -100,6 +100,7 @@ enum class Hotkey : uint8_t {
     TimerSkip,
     TimerReset,
     TimerPause,
+    RaceMode,
 };
 inline constexpr int kPadNone = -1;
 inline constexpr int kPadTriggerLeft = SDL_GAMEPAD_BUTTON_COUNT;
@@ -110,7 +111,7 @@ struct HotkeyDef {
     SDL_Keycode default_key;
     int default_pad;
 };
-inline constexpr std::array<HotkeyDef, 9> kHotkeys = {{
+inline constexpr std::array<HotkeyDef, 10> kHotkeys = {{
     {"Rewind", "Rewind (hold)", SDLK_BACKSPACE, kPadTriggerLeft},
     {"FastForward", "Fast-forward (hold)", SDLK_TAB, kPadTriggerRight},
     {"FastForwardToggle", "Fast-forward (toggle)", SDLK_GRAVE, SDL_GAMEPAD_BUTTON_RIGHT_STICK},
@@ -120,6 +121,7 @@ inline constexpr std::array<HotkeyDef, 9> kHotkeys = {{
     {"TimerSkip", "Timer: skip split", SDLK_KP_2, kPadNone},
     {"TimerReset", "Timer: reset", SDLK_KP_3, kPadNone},
     {"TimerPause", "Timer: pause", SDLK_KP_5, kPadNone},
+    {"RaceMode", "Race mode (on / off, asks first)", SDLK_F12, kPadNone},
 }};
 struct HotkeyMap {
     std::array<SDL_Keycode, kHotkeys.size()> keys{};
