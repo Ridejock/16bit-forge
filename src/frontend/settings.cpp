@@ -63,6 +63,33 @@ auto load_port(PortConfig& port, std::string_view key, const std::string& value)
     }
 }
 
+// [window] keys: <prefix>_display, <prefix>_display_bounds, <prefix>_rect, <prefix>_maximized.
+struct WindowKeys {
+    const char* prefix;
+    WindowGeometry WindowConfig::*geometry;
+};
+constexpr WindowKeys kWindowKeys[] = {{"main", &WindowConfig::main}, {"game", &WindowConfig::game}};
+
+auto load_display(DisplayRef& ref, std::string_view key, std::string_view prefix, const std::string& value) -> void {
+    const std::string base = std::string(prefix) + "_display";
+    if (key == base) ref.name = value;
+    if (key == base + "_bounds") parse_rect(value, ref.bounds);
+}
+
+auto save_display(std::ostream& out, std::string_view prefix, const DisplayRef& ref) -> void {
+    out << prefix << "_display=" << ref.name << "\n" << prefix << "_display_bounds=" << format_rect(ref.bounds) << "\n";
+}
+
+auto load_window(WindowConfig& window, std::string_view key, const std::string& value) -> void {
+    for (const auto& k : kWindowKeys) {
+        WindowGeometry& g = window.*k.geometry;
+        load_display(g.display, key, k.prefix, value);
+        if (key == std::string(k.prefix) + "_rect") parse_rect(value, g.rect);
+        if (key == std::string(k.prefix) + "_maximized") g.maximized = parse_bool(value);
+    }
+    load_display(window.fullscreen, key, "fullscreen", value);
+}
+
 } // namespace
 
 auto Settings::add_recent(const std::string& path) -> void {
@@ -198,6 +225,8 @@ auto Settings::load(const std::string& path) -> void {
             for (const auto& e : speedrun::kMovieEnds) {
                 if (key == "at_end" && value == e.key) movie.at_end = e.id;
             }
+        } else if (section == "window") {
+            load_window(window, key, value);
         } else if (section == "keys") {
             for (size_t i = 0; i < kPadButtons.size(); i++) {
                 if (key != kPadButtons[i].name) continue;
@@ -266,6 +295,15 @@ auto Settings::save(const std::string& path) const -> bool {
         << "attempt_movies=" << (movie.attempt_movies ? 1 : 0) << "\n"
         << "overlay=" << (movie.overlay ? 1 : 0) << "\n"
         << "flush_frames=" << movie.flush_frames << "\n\n";
+
+    out << "[window]\n";
+    for (const auto& k : kWindowKeys) {
+        const WindowGeometry& g = window.*k.geometry;
+        save_display(out, k.prefix, g.display);
+        out << k.prefix << "_rect=" << format_rect(g.rect) << "\n" << k.prefix << "_maximized=" << (g.maximized ? 1 : 0) << "\n";
+    }
+    save_display(out, "fullscreen", window.fullscreen);
+    out << "\n";
 
     out << "[recent]\n";
     for (size_t i = 0; i < recent_roms.size(); i++) {

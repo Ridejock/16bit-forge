@@ -81,6 +81,18 @@ auto local_time(int64_t seconds, const char* format) -> std::string {
     return text;
 }
 
+// The part of `area` where a window's client area can go with its title bar and frame on screen too.
+auto inside_frame(SDL_Window* window, const WindowRect& area) -> WindowRect {
+    int top = 0;
+    int left = 0;
+    int bottom = 0;
+    int right = 0;
+    SDL_GetWindowBordersSize(window, &top, &left, &bottom, &right);  // stays 0 where unsupported
+    return {area.x + left, area.y + top, area.w - left - right, area.h - top - bottom};
+}
+
+auto to_rect(const SDL_Rect& r) -> WindowRect { return {r.x, r.y, r.w, r.h}; }
+
 auto state_name(bool loaded, bool paused) -> const char* {
     if (!loaded) return "Stopped";
     return paused ? "Paused" : "Running";
@@ -146,14 +158,18 @@ auto App::init() -> bool {
 #endif
 
     const float scale = display_scale();
+    refresh_displays();
+    // Hidden until it is where it was last time (if that display is still connected).
     main_window_ = SDL_CreateWindow(kMainTitle, static_cast<int>(kMainWidth * scale), static_cast<int>(kMainHeight * scale),
-                                    SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+                                    SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN);
     if (!main_window_) {
         utils::Logger::error("Main window creation failed: %s", SDL_GetError());
         return false;
     }
     set_app_icon(main_window_);
     SDL_SetWindowMinimumSize(main_window_, kMainMinWidth, kMainMinHeight);
+    restore_window(main_window_, settings_.window.main);
+    SDL_ShowWindow(main_window_);
 
     main_renderer_ = SDL_CreateRenderer(main_window_, nullptr);
     if (!main_renderer_) {
@@ -247,6 +263,7 @@ auto App::run(const LaunchOptions& options) -> int {
 auto App::ui_frame() -> void {
     SDL_Event event;
     while (SDL_PollEvent(&event)) handle_event(event);
+    if (window_moved_) remember_windows();
     send_input();
     // Race mode: the emulation thread ignores rewind and fast-forward too; this says why.
     const bool rewind = input_.hotkey_held(Hotkey::Rewind) && !race_blocks(speedrun::Guard::Rewind);
@@ -346,7 +363,7 @@ auto App::boot(const std::string& path) -> void {
         status_ = emu_thread_.status();
         return;
     }
-    if (!reused) place_game_window();
+    if (!reused && !restore_window(game_.window(), settings_.window.game)) place_game_window();
     input_.release_all();
     emu_thread_.call([](EmuThread::Core& c) {
         c.state = RunState::Running;
@@ -371,8 +388,10 @@ auto App::stop() -> void {
         c.state = RunState::Stopped;
     });
     status_ = emu_thread_.status();
+    remember_windows();
     game_.close();
     input_.release_all();
+    save_settings();  // where the game window was
     utils::Logger::info("Emulation stopped");
 }
 
@@ -388,6 +407,9 @@ auto App::handle_event(const SDL_Event& event) -> void {
         request_quit();
         return;
     }
+
+    if (event.type >= SDL_EVENT_DISPLAY_FIRST && event.type <= SDL_EVENT_DISPLAY_LAST) refresh_displays();
+    if (event.type >= SDL_EVENT_WINDOW_FIRST && event.type <= SDL_EVENT_WINDOW_LAST) window_moved_ = true;
 
     // Gamepads aren't tied to a window. ImGui sees them too (it tracks connected pads).
     bool bound = false;
@@ -479,10 +501,8 @@ auto App::handle_game_event(const SDL_Event& event) -> void {
         if (event.key.repeat) break;
         if (event.key.key == SDLK_ESCAPE && mouse_captured_) {
             set_mouse_captured(false);
-        } else if (event.key.key == SDLK_F11) {
-            game_.toggle_fullscreen();
-        } else if (event.key.key == SDLK_ESCAPE && game_.is_fullscreen()) {
-            game_.toggle_fullscreen();
+        } else if (event.key.key == SDLK_F11 || (event.key.key == SDLK_ESCAPE && game_.is_fullscreen())) {
+            toggle_fullscreen();
         } else if (!state_hotkey(event.key.key, event.key.mod)) {
             input_.on_key(event.key.key, true, event.key.timestamp);
         }
@@ -741,9 +761,8 @@ auto App::draw_menu_bar() -> void {
             if (!settings_.show_messages) game_.show_message({});
             save_settings();
         }
-        if (ImGui::MenuItem("Fullscreen game window", "F11", game_.is_fullscreen(), game_.is_open())) {
-            game_.toggle_fullscreen();
-        }
+        if (ImGui::MenuItem("Fullscreen game window", "F11", game_.is_fullscreen(), game_.is_open())) toggle_fullscreen();
+        draw_fullscreen_menu();
         ImGui::Separator();
         draw_video_menus();
         ImGui::EndMenu();
@@ -1914,18 +1933,103 @@ auto App::place_game_window() -> void {
         SDL_SetWindowPosition(game_.window(), main.x + main.w + kWindowGap, main.y);
         return;
     }
-    // Positions are of the client area: keep the game window's title bar and frame on screen too.
-    int top = 0;
-    int left = 0;
-    int bottom = 0;
-    int right = 0;
-    SDL_GetWindowBordersSize(game_.window(), &top, &left, &bottom, &right);  // stays 0 where unsupported
-    const WindowRect usable{bounds.x + left, bounds.y + top, bounds.w - left - right, bounds.h - top - bottom};
+    const WindowRect usable = inside_frame(game_.window(), to_rect(bounds));
 
     const bool movable = !(SDL_GetWindowFlags(main_window_) & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN));
     const WindowPlacement place = place_beside(main, movable, game_w, game_h, usable, kWindowGap);
     if (place.main_x != main.x) SDL_SetWindowPosition(main_window_, place.main_x, main.y);
     SDL_SetWindowPosition(game_.window(), place.game_x, place.game_y);
+}
+
+auto App::refresh_displays() -> void {
+    displays_.clear();
+    int count = 0;
+    SDL_DisplayID* ids = SDL_GetDisplays(&count);
+    for (int i = 0; ids && i < count; i++) {
+        SDL_Rect bounds{};
+        SDL_Rect usable{};
+        if (!SDL_GetDisplayBounds(ids[i], &bounds)) continue;
+        if (!SDL_GetDisplayUsableBounds(ids[i], &usable)) usable = bounds;
+        const char* name = SDL_GetDisplayName(ids[i]);
+        displays_.push_back({ids[i], name ? name : "", to_rect(bounds), to_rect(usable)});
+    }
+    SDL_free(ids);
+}
+
+// Puts a window back where `saved` says, on that display, kept on screen. False when the display
+// isn't connected (the caller's default placement applies).
+auto App::restore_window(SDL_Window* window, const WindowGeometry& saved) -> bool {
+    const int i = find_display(displays_, saved.display);
+    if (i < 0) return false;
+    const DisplayInfo& display = displays_[static_cast<size_t>(i)];
+    WindowRect rect = saved.rect;
+    if (rect.w <= 0 || rect.h <= 0) SDL_GetWindowSize(window, &rect.w, &rect.h);
+    const WindowRect r = restore_rect(rect, saved.display.bounds, display, inside_frame(window, display.usable));
+    SDL_SetWindowSize(window, r.w, r.h);
+    SDL_SetWindowPosition(window, r.x, r.y);
+    if (saved.maximized) SDL_MaximizeWindow(window);  // a hidden window maximizes when shown
+    return true;
+}
+
+// Keeps the restored place and size only: a maximized window keeps the one from before (moved
+// along if it was maximized onto another display), and fullscreen or minimized changes nothing.
+auto App::remember_window(SDL_Window* window, WindowGeometry& saved) -> void {
+    const SDL_WindowFlags flags = SDL_GetWindowFlags(window);
+    if (flags & (SDL_WINDOW_HIDDEN | SDL_WINDOW_MINIMIZED | SDL_WINDOW_FULLSCREEN)) return;
+    const SDL_DisplayID id = SDL_GetDisplayForWindow(window);
+    const auto display = std::find_if(displays_.begin(), displays_.end(), [id](const DisplayInfo& d) { return d.id == id; });
+    if (display == displays_.end()) return;
+    saved.maximized = (flags & SDL_WINDOW_MAXIMIZED) != 0;
+    if (saved.maximized) {
+        if (!saved.display.empty() && saved.display != display_ref(*display)) {
+            saved.rect = restore_rect(saved.rect, saved.display.bounds, *display, display->usable);
+            saved.display = display_ref(*display);
+        }
+        return;
+    }
+    SDL_GetWindowPosition(window, &saved.rect.x, &saved.rect.y);
+    SDL_GetWindowSize(window, &saved.rect.w, &saved.rect.h);
+    saved.display = display_ref(*display);
+}
+
+auto App::remember_windows() -> void {
+    window_moved_ = false;
+    if (main_window_) remember_window(main_window_, settings_.window.main);
+    if (game_.is_open()) remember_window(game_.window(), settings_.window.game);
+}
+
+// Fullscreen goes to the display chosen in View > Fullscreen on, or the game window's own when
+// that one isn't connected.
+auto App::toggle_fullscreen() -> void {
+    if (!game_.is_open()) return;
+    const DisplayRef& chosen = settings_.window.fullscreen;
+    if (!game_.is_fullscreen() && !chosen.empty() && find_display(displays_, chosen) < 0) {
+        utils::Logger::info(utils::LogChannel::Video, "Display %s isn't connected: fullscreen on the game window's display",
+                            chosen.name.c_str());
+    }
+    game_.toggle_fullscreen(display_or(displays_, chosen, SDL_GetDisplayForWindow(game_.window())));
+}
+
+auto App::draw_fullscreen_menu() -> void {
+    if (!ImGui::BeginMenu("Fullscreen on")) return;
+    DisplayRef& chosen = settings_.window.fullscreen;
+    if (ImGui::MenuItem("Current window's display", nullptr, chosen.empty())) {
+        chosen = {};
+        save_settings();
+    }
+    const int selected = find_display(displays_, chosen);
+    const std::vector<std::string> labels = display_labels(displays_);
+    for (size_t i = 0; i < displays_.size(); i++) {
+        if (ImGui::MenuItem(labels[i].c_str(), nullptr, selected == static_cast<int>(i))) {
+            chosen = display_ref(displays_[i]);
+            save_settings();
+        }
+    }
+    if (!chosen.empty() && selected < 0) {
+        ImGui::MenuItem((chosen.name + " (not connected)").c_str(), nullptr, true, false);
+        ImGui::SetItemTooltip("Fullscreen uses the game window's display until this one is connected again.");
+    }
+    ImGui::EndMenu();
 }
 
 auto App::view_options() const -> ViewOptions {
@@ -1938,6 +2042,8 @@ auto App::current_filter() const -> const video::FilterPreset& {
 
 auto App::apply_view() -> void {
     game_.apply_scale(view_options());
+    // A closed game window opens at the new size next time (where it was, if that display is there).
+    if (!game_.is_open()) settings_.window.game.rect.w = settings_.window.game.rect.h = 0;
     save_settings();
 }
 

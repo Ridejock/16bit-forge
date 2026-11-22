@@ -3,6 +3,7 @@
 #include "frontend/game_window.hpp"
 #include "frontend/input.hpp"
 #include "frontend/rewind.hpp"
+#include "frontend/window_placement.hpp"
 #include "speedrun/movie.hpp"
 #include "speedrun/movie_journal.hpp"
 #include "speedrun/splits.hpp"
@@ -37,6 +38,14 @@ struct MovieConfig {
     int flush_frames = speedrun::kDefaultFlushFrames;    // a recording goes to its journal this often
 };
 
+// [window]: where the main and game windows were (restored place and size, per display) and the
+// display fullscreen goes to (empty: the game window's own).
+struct WindowConfig {
+    WindowGeometry main;
+    WindowGeometry game;
+    DisplayRef fullscreen;
+};
+
 struct Settings {
     static constexpr int kMinScale = 1;
     static constexpr int kMaxScale = 4;
@@ -64,6 +73,7 @@ struct Settings {
     TimerConfig timer;                              // [timer]
     RaceConfig race;                                // [race]
     MovieConfig movie;                              // [movie]
+    WindowConfig window;                            // [window]
     bool show_timer = false;                        // the Timer tab is open
 
     // [log]: per-sink level and log file, per-channel enable. Applied to utils::Logger.

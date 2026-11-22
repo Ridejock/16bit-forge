@@ -142,6 +142,7 @@ auto GameWindow::create_backend(video::BackendKind wanted, const video::FilterPr
 
 auto GameWindow::close() -> void {
     backend_.reset();
+    return_place_.reset();
     if (window_) SDL_DestroyWindow(window_);
     window_ = nullptr;
 }
@@ -172,8 +173,32 @@ auto GameWindow::is_fullscreen() const -> bool {
     return window_ && (SDL_GetWindowFlags(window_) & SDL_WINDOW_FULLSCREEN);
 }
 
-auto GameWindow::toggle_fullscreen() -> void {
-    if (window_) SDL_SetWindowFullscreen(window_, !is_fullscreen());
+auto GameWindow::toggle_fullscreen(SDL_DisplayID display) -> void {
+    if (!window_) return;
+    if (is_fullscreen()) {
+        SDL_SetWindowFullscreen(window_, false);
+        if (return_place_) {
+            SDL_SyncWindow(window_);
+            SDL_SetWindowPosition(window_, return_place_->x, return_place_->y);
+            if (return_place_->maximized) SDL_MaximizeWindow(window_);
+            return_place_.reset();
+        }
+        return;
+    }
+    if (display && display != SDL_GetDisplayForWindow(window_)) {
+        // Desktop fullscreen fills the display the window is on: move it there first.
+        const bool maximized = (SDL_GetWindowFlags(window_) & SDL_WINDOW_MAXIMIZED) != 0;
+        if (maximized) {
+            SDL_RestoreWindow(window_);
+            SDL_SyncWindow(window_);
+        }
+        ReturnPlace back{0, 0, maximized};
+        SDL_GetWindowPosition(window_, &back.x, &back.y);
+        return_place_ = back;
+        SDL_SetWindowPosition(window_, SDL_WINDOWPOS_CENTERED_DISPLAY(display), SDL_WINDOWPOS_CENTERED_DISPLAY(display));
+        SDL_SyncWindow(window_);
+    }
+    SDL_SetWindowFullscreen(window_, true);
 }
 
 auto GameWindow::present(const uint32_t* pixels, int width, int height, const ViewOptions& view) -> void {

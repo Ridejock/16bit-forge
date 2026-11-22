@@ -150,6 +150,14 @@ private:
     auto open_rom_dialog() -> void;
     auto scan_roms() -> void;
     auto place_game_window() -> void;
+    // Multiple displays: the connected ones (refreshed when one comes or goes), each window's place
+    // and size kept in settings_.window, and the display fullscreen goes to.
+    auto refresh_displays() -> void;
+    auto restore_window(SDL_Window* window, const WindowGeometry& saved) -> bool;
+    auto remember_window(SDL_Window* window, WindowGeometry& saved) -> void;
+    auto remember_windows() -> void;
+    auto toggle_fullscreen() -> void;
+    auto draw_fullscreen_menu() -> void;
     auto view_options() const -> ViewOptions;
     auto current_filter() const -> const video::FilterPreset&;
     auto apply_view() -> void;
@@ -163,6 +171,8 @@ private:
     bool imgui_ready_ = false;
 
     GameWindow game_;
+    std::vector<DisplayInfo> displays_;
+    bool window_moved_ = false;  // a window event since the last remember_windows()
     EmuThread emu_thread_;  // owns the Emulator and drives the AudioOutput
     EmuStatus status_;      // its last published status, refreshed every UI frame
     InputManager input_;

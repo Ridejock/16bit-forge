@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <span>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -83,7 +84,9 @@ public:
 
     auto set_title(const char* title) -> void;
     auto apply_scale(const ViewOptions& view) -> void;
-    auto toggle_fullscreen() -> void;
+    // Fullscreen on `display` (0: the one the window is on). Leaving it puts the window back where it
+    // was before it moved there.
+    auto toggle_fullscreen(SDL_DisplayID display = 0) -> void;
     auto is_fullscreen() const -> bool;
 
     // Uploads the frame (XRGB8888) and presents it letterboxed. A null frame clears to black.
@@ -117,6 +120,14 @@ private:
 
     SDL_Window* window_ = nullptr;
     std::unique_ptr<video::VideoBackend> backend_;
+
+    // Where the window was before fullscreen moved it to another display.
+    struct ReturnPlace {
+        int x = 0;
+        int y = 0;
+        bool maximized = false;
+    };
+    std::optional<ReturnPlace> return_place_;
 
     // The current message, drawn once into an ARGB image; re-sent to the backend when it changes
     // or the backend is replaced.

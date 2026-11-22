@@ -404,12 +404,17 @@ auto test_settings_round_trip() -> void {
     out.pointer.crosshair = false;
     out.ports[4].device = std::string(kNoDevice);
     out.show_messages = false;
+    out.window.main = {{"LG ULTRAGEAR", {-2560, 0, 2560, 1440}}, {-2000, 100, 960, 640}, true};
+    out.window.game = {{"DELL U2419H", {0, 0, 1920, 1080}}, {200, 80, 0, 0}, false};
+    out.window.fullscreen = {"LG ULTRAGEAR", {-2560, 0, 2560, 1440}};
     CHECK(out.save(path));
     Settings in;
     in.load(path);
     std::filesystem::remove(path);
     CHECK(in.port_devices == out.port_devices);
     CHECK(!in.show_messages);
+    CHECK(in.window.main == out.window.main && in.window.game == out.window.game);
+    CHECK(in.window.fullscreen == out.window.fullscreen);
     CHECK(in.pointer.mouse_speed == 150 && !in.pointer.crosshair);
     CHECK(in.ports[4].device == kNoDevice && in.ports[3].device == kAutoDevice);
     CHECK(in.ports[0].device == out.ports[0].device);
@@ -429,6 +434,7 @@ auto test_settings_round_trip() -> void {
     Settings defaults;
     CHECK(defaults.speed.rewind && defaults.speed.fast_forward_speed == 4 && !defaults.speed.rewind_reverse_audio);
     CHECK(defaults.show_messages);
+    CHECK(defaults.window.main.display.empty() && defaults.window.fullscreen.empty());
 }
 
 } // namespace
@@ -456,7 +462,7 @@ int main() {
     run_test("Virtual gamepads: hotplug, ports, bind, GUID", [] { return test_virtual_pads(); });
     run_test("Rewind / fast-forward hotkeys: keys, triggers, bind", [] { return test_hotkeys(); });
     run_test("Console port devices, multitap pads, mouse, scope aim + crosshair", [] { return test_controller_devices(); });
-    run_test("Pad and log settings ini round trip", [] { test_settings_round_trip(); return true; });
+    run_test("Pad, log and window settings ini round trip", [] { test_settings_round_trip(); return true; });
     std::printf("\n=== Results: %d passed, %d failed ===\n", passed, failed);
     SDL_Quit();
     return failed == 0 ? 0 : 1;
