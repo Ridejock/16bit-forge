@@ -276,6 +276,10 @@ target_link_libraries(timing_tests PRIVATE bitforge_core SDL3::SDL3-static)
 add_executable(pacer_tests tests/pacer_tests.cpp)
 target_include_directories(pacer_tests PRIVATE src)
 
+# Game window placement beside the main window, kept on screen (header-only logic, no display).
+add_executable(window_tests tests/window_tests.cpp)
+target_include_directories(window_tests PRIVATE src)
+
 # The emulation thread: the frame mailbox, the command queue, and a real-time harness (the real
 # EmuThread, core and audio output against a simulated sound card thread, with the UI thread
 # stalling). Build with -DBITFORGE_TSAN=ON to run it under ThreadSanitizer.
@@ -288,7 +292,7 @@ target_link_libraries(thread_tests PRIVATE bitforge_core SDL3::SDL3-static Threa
 add_executable(audio_dump tools/audio_dump.cpp)
 target_link_libraries(audio_dump PRIVATE bitforge_core)
 
-foreach(target ${PROJECT_NAME} bitforge_core cpu_tests ppu_tests apu_tests state_tests chip_tests input_tests filter_tests audio_sync_tests memory_tests timer_tests race_tests movie_tests timing_tests pacer_tests thread_tests audio_dump)
+foreach(target ${PROJECT_NAME} bitforge_core cpu_tests ppu_tests apu_tests state_tests chip_tests input_tests filter_tests audio_sync_tests memory_tests timer_tests race_tests movie_tests timing_tests pacer_tests window_tests thread_tests audio_dump)
     if(MSVC)
         target_compile_options(${target} PRIVATE /W4)
         target_compile_definitions(${target} PRIVATE _CRT_SECURE_NO_WARNINGS)  # fopen/getenv are fine here
@@ -299,7 +303,7 @@ endforeach()
 
 # ---- tests: ctest runs every suite headless (no window, no audio device, no ROM files) ----
 enable_testing()
-foreach(suite cpu_tests ppu_tests apu_tests state_tests chip_tests audio_sync_tests input_tests filter_tests memory_tests timer_tests race_tests movie_tests timing_tests pacer_tests thread_tests)
+foreach(suite cpu_tests ppu_tests apu_tests state_tests chip_tests audio_sync_tests input_tests filter_tests memory_tests timer_tests race_tests movie_tests timing_tests pacer_tests window_tests thread_tests)
     add_test(NAME ${suite} COMMAND ${suite})
     set_tests_properties(${suite} PROPERTIES TIMEOUT 900 ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy")
 endforeach()

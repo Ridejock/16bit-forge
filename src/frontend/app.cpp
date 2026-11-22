@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "frontend/app.hpp"
 #include "frontend/app_icon.hpp"
+#include "frontend/window_placement.hpp"
 #include "snes/savestate.hpp"
 #include "speedrun/race.hpp"
 #include "utils/logging.hpp"
@@ -1899,25 +1900,32 @@ auto App::scan_roms() -> void {
 }
 
 auto App::place_game_window() -> void {
-    int x = 0;
-    int y = 0;
-    int w = 0;
-    SDL_GetWindowPosition(main_window_, &x, &y);
+    WindowRect main{};
+    SDL_GetWindowPosition(main_window_, &main.x, &main.y);
+    SDL_GetWindowSize(main_window_, &main.w, &main.h);
     int game_w = 0;
-    SDL_GetWindowSize(main_window_, &w, nullptr);
-    SDL_GetWindowSize(game_.window(), &game_w, nullptr);
+    int game_h = 0;
+    SDL_GetWindowSize(game_.window(), &game_w, &game_h);
 
-    // Side by side on the main window's display; slide the main window left if the pair would spill off.
-    SDL_Rect usable{};
-    if (SDL_GetDisplayUsableBounds(SDL_GetDisplayForWindow(main_window_), &usable)) {
-        const int right = usable.x + usable.w;
-        const int needed = w + kWindowGap + game_w;
-        if (x + needed > right) {
-            x = std::max(usable.x, right - needed);
-            SDL_SetWindowPosition(main_window_, x, y);
-        }
+    // Side by side on the main window's display. A maximized or fullscreen main window fills it, so
+    // it stays put and the game window opens over it, on screen (window_placement.hpp).
+    SDL_Rect bounds{};
+    if (!SDL_GetDisplayUsableBounds(SDL_GetDisplayForWindow(main_window_), &bounds)) {
+        SDL_SetWindowPosition(game_.window(), main.x + main.w + kWindowGap, main.y);
+        return;
     }
-    SDL_SetWindowPosition(game_.window(), x + w + kWindowGap, y);
+    // Positions are of the client area: keep the game window's title bar and frame on screen too.
+    int top = 0;
+    int left = 0;
+    int bottom = 0;
+    int right = 0;
+    SDL_GetWindowBordersSize(game_.window(), &top, &left, &bottom, &right);  // stays 0 where unsupported
+    const WindowRect usable{bounds.x + left, bounds.y + top, bounds.w - left - right, bounds.h - top - bottom};
+
+    const bool movable = !(SDL_GetWindowFlags(main_window_) & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN));
+    const WindowPlacement place = place_beside(main, movable, game_w, game_h, usable, kWindowGap);
+    if (place.main_x != main.x) SDL_SetWindowPosition(main_window_, place.main_x, main.y);
+    SDL_SetWindowPosition(game_.window(), place.game_x, place.game_y);
 }
 
 auto App::view_options() const -> ViewOptions {
